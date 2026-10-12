@@ -338,6 +338,7 @@ struct PipelineCache::ProgramCache {
 		lookup_key.code_size       = static_cast<uint32_t>(params.code.size());
 		BuildStageStaticKey(input_info, lookup_key.static_state);
 		auto                                         entry = programs.find(lookup_key);
+		const bool                                   was_new_program_key = entry == programs.end();
 		ShaderRecompiler::IR::SrtRuntime             runtime {
 		    .user_data                  = user_data,
 		    .shader_base                = params.Base(),
@@ -445,6 +446,39 @@ struct PipelineCache::ProgramCache {
 			}
 		}
 		diagnostic_phase("materialized");
+		if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+			// Code hash alone does not identify a compiled shader; static input and
+			// resource specialization can require distinct modules.
+			const auto static_key_hash =
+			    XXH3_64bits(lookup_key.static_state.data(),
+			                lookup_key.static_state.size() * sizeof(uint32_t));
+			size_t same_code_keys = 0;
+			for (const auto& [key, cached]: programs) {
+				(void)cached;
+				if (key.stage == stage && key.hash == params.hash) ++same_code_keys;
+			}
+			size_t same_specialization = 0;
+			size_t same_layout = 0;
+			for (const auto& candidate: entry->second.permutations) {
+				if (candidate.specialization == entry->second.specialization) {
+					++same_specialization;
+				}
+				const auto& layout = candidate.program.bindings;
+				if (layout.push_data_start_dword == ShaderRecompiler::IR::PushData::StartFor(
+				        push_data_cursor, layout.ShaderDataDwords())) {
+					++same_layout;
+				}
+			}
+			Log::WriteToConsoleAndLog(fmt::format(
+			    "ShaderCacheMiss: stage=cs hash=0x{:016x} new_static_key={} "
+			    "static_key_hash=0x{:016x} same_code_keys={} existing_permutations={} "
+			    "same_specialization={} same_layout={} source_changed={} "
+			    "groups={},{},{}\n",
+			    params.hash, was_new_program_key ? 1 : 0, static_key_hash,
+			    same_code_keys, entry->second.permutations.size(), same_specialization,
+			    same_layout, source_changed ? 1 : 0, input_info.workgroup_counts[0],
+			    input_info.workgroup_counts[1], input_info.workgroup_counts[2]));
+		}
 		entry->second.permutations.push_back(CompilePermutation(
 		    stage_name, options, std::move(translated), entry->second.specialization, push_data_cursor,
 		    entry->second.FunctionCode()));
@@ -986,7 +1020,14 @@ PipelineCache::GetComputePipeline(const ShaderComputeInputInfo& input_info,
 	}
 
 	auto cached = std::make_unique<Pipeline>();
+	const auto create_start = std::chrono::steady_clock::now();
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "ComputePipelinePhase: program_id={} phase=create_begin\n", compute_program.id));
 	CreatePipelineInternal(m_graphics, *cached, input_info, compute_program.module, m_driver_cache);
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "ComputePipelinePhase: program_id={} phase=create_done elapsed_ms={}\n",
+	    compute_program.id, std::chrono::duration_cast<std::chrono::milliseconds>(
+	                            std::chrono::steady_clock::now() - create_start).count()));
 
 	EXIT_NOT_IMPLEMENTED(cached->pipeline == nullptr);
 	EXIT_NOT_IMPLEMENTED(cached->pipeline_layout == nullptr);
