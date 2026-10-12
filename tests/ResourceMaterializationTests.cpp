@@ -844,15 +844,15 @@ void TestFetchOnlyMixedNumericIndirectImages() {
             specialization.images[1].numeric_class == TextureNumericClass::Uint,
         "fetch-only mixed numeric image table lost candidate numeric types");
 
-  // Sampling requires a typed sampler path; do not silently relax that guard.
+  // Sampling must preserve both float and integer Vulkan sampler variants.
   DescriptorSource sampler;
   sampler.dword_count = 4;
   sampler.dwords.fill(Value(0u));
   program.descriptor_sources.push_back(sampler);
   program.info.samplers.push_back({.source = 3});
   program.info.sampled_pairs.push_back({.image = 0, .sampler = 0});
-  Check(!MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
-        "mixed float/uint indirect sampling was incorrectly accepted");
+  Check(MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
+        "mixed float/uint indirect sampling could not select typed image candidates");
 
   program.info.sampled_pairs.clear();
   program.info.samplers.clear();
@@ -860,6 +860,24 @@ void TestFetchOnlyMixedNumericIndirectImages() {
       Value(static_cast<uint32_t>(BufferFormat::k32SInt) << 20u);
   Check(!MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
         "mixed float/signed-integer indirect fetch was incorrectly accepted");
+
+  // Restore float/uint and check that the shader retains sampler variants
+  // for each candidate after the resource-specialization IR pass.
+  program.descriptor_sources[1].dwords[1] =
+      Value(static_cast<uint32_t>(BufferFormat::k32UInt) << 20u);
+  program.info.samplers.push_back({.source = 3});
+  program.info.sampled_pairs.push_back({.image = 0, .sampler = 0});
+  Check(MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
+        "mixed numeric resource specialization failed on revalidation");
+  ApplyResourceSpecialization(program, specialization);
+  Check(program.info.samplers.size() == 2 &&
+            program.info.samplers[0].class_variants[0] == 0 &&
+            program.info.samplers[0].class_variants[1] == 1 &&
+            program.info.samplers[1].snapshot_index == 0 &&
+            program.info.samplers[1].integer_border &&
+            !program.info.samplers[1].force_point_filtering &&
+            program.info.images[0].indirect_resources.size() == 2,
+        "mixed numeric candidate sampler variants were not preserved");
   Check(unexpected_reads == 0u,
         "finite literal descriptors unexpectedly read specialization memory");
 }
