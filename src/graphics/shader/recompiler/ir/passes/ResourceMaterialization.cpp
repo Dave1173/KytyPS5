@@ -614,9 +614,23 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			    image.mip_count != image_class.mip_count ||
 			    image.conversion_format != image_class.conversion_format ||
 			    image.shader_swizzle != image_class.shader_swizzle) {
-				return SpecializationFail(
-				    fmt::format("indirect image table at pc 0x{:08x} has incompatible candidates",
-				                program.info.images[root_index].first_use_pc));
+				// Preserve this rejection: mixing incompatible Vulkan image types is unsafe.
+				// Report both descriptor classes so a failing guest shader can be
+				// diagnosed without guessing which invariant rejected the table.
+				return SpecializationFail(fmt::format(
+				    "indirect image table at pc 0x{:08x} has incompatible candidates: "
+				    "root={} exemplar={} candidate={} "
+				    "numeric=({},{}) dimension=({},{}) cube=({},{}) "
+				    "mips=({},{}) conversion=({},{}) swizzle=(0x{:08x},0x{:08x})",
+				    program.info.images[root_index].first_use_pc, root_index, exemplar, candidate,
+				    static_cast<uint32_t>(image_class.numeric_class),
+				    static_cast<uint32_t>(image.numeric_class),
+				    static_cast<uint32_t>(image_class.dimension),
+				    static_cast<uint32_t>(image.dimension), image_class.cube, image.cube,
+				    image_class.mip_count, image.mip_count,
+				    static_cast<uint32_t>(image_class.conversion_format),
+				    static_cast<uint32_t>(image.conversion_format),
+				    image_class.shader_swizzle, image.shader_swizzle));
 			}
 		}
 	}
