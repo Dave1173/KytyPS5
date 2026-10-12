@@ -837,8 +837,6 @@ void EmitImage(ValueEmitContext& ctx, const IR::Inst& inst) {
 				ctx.Fail(inst, "has an unsupported 1D-array gather");
 				return;
 			}
-			const auto result_numeric_class = dref ? Prospero::TextureNumericClass::Float
-			                                       : numeric_class;
 			uint32_t component_or_dref;
 			if (dref) {
 				component_or_dref = layout.dref != NoImageComponent
