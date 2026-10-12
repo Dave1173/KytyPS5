@@ -793,6 +793,77 @@ void TestFiniteImageRefreshReusesScalarReads() {
         "finite image refresh grew reusable resource storage after warmup");
 }
 
+void TestFetchOnlyMixedNumericIndirectImages() {
+  using namespace Libs::Graphics::ShaderRecompiler::IR;
+  using Libs::Graphics::Prospero::BufferFormat;
+  using Libs::Graphics::Prospero::ImageType;
+  using Libs::Graphics::Prospero::TextureNumericClass;
+  Program program;
+  program.stage = Libs::Graphics::ShaderType::Compute;
+  program.srt_plan_complete = true;
+  program.resource_tracking_complete = true;
+  AddValueBlock(program);
+
+  const auto add_image = [&](BufferFormat format, uint32_t address) {
+    DescriptorSource source;
+    source.dword_count = 8;
+    source.dwords.fill(Value(0u));
+    source.dwords[0] = Value(address);
+    source.dwords[1] = Value(static_cast<uint32_t>(format) << 20u);
+    source.dwords[3] = Value(Libs::Graphics::DstSel(4, 5, 6, 7) |
+        (static_cast<uint32_t>(ImageType::kColor2D) << 28u));
+    program.descriptor_sources.push_back(source);
+  };
+  add_image(BufferFormat::k32Float, 0x100u);
+  add_image(BufferFormat::k32UInt, 0x200u);
+  DescriptorSource indirect;
+  indirect.dword_count = 8;
+  indirect.indirect_descriptor.emplace(DescriptorSource::IndirectDescriptor{}).sources = {0, 1};
+  program.descriptor_sources.push_back(indirect);
+  program.info.images.push_back({
+      .source = 2,
+      .resource_class = ImageResourceClass::Sampled,
+      .numeric_class = TextureNumericClass::Float,
+      .dimension = Libs::Graphics::ShaderRecompiler::Decoder::ImageDimension::Dim2D});
+
+  ResourceSnapshot snapshot;
+  ResourceSpecialization specialization;
+  // Indirect sources require a specialization reader even for finite candidate
+  // sets whose descriptor words are literal constants. No reads are expected.
+  uint32_t unexpected_reads = 0;
+  const SrtRuntime runtime{
+      .userdata = &unexpected_reads,
+      .read_specialization_memory = +[](void *userdata, uint64_t, std::span<uint32_t>) {
+        ++*static_cast<uint32_t *>(userdata);
+        return false;
+      }};
+  Check(MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
+        "fetch-only indirect image table rejected mixed float/uint descriptors");
+  Check(snapshot.images.size() == 2 && specialization.images.size() == 2 &&
+            specialization.images[0].numeric_class == TextureNumericClass::Float &&
+            specialization.images[1].numeric_class == TextureNumericClass::Uint,
+        "fetch-only mixed numeric image table lost candidate numeric types");
+
+  // Sampling requires a typed sampler path; do not silently relax that guard.
+  DescriptorSource sampler;
+  sampler.dword_count = 4;
+  sampler.dwords.fill(Value(0u));
+  program.descriptor_sources.push_back(sampler);
+  program.info.samplers.push_back({.source = 3});
+  program.info.sampled_pairs.push_back({.image = 0, .sampler = 0});
+  Check(!MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
+        "mixed float/uint indirect sampling was incorrectly accepted");
+
+  program.info.sampled_pairs.clear();
+  program.info.samplers.clear();
+  program.descriptor_sources[1].dwords[1] =
+      Value(static_cast<uint32_t>(BufferFormat::k32SInt) << 20u);
+  Check(!MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
+        "mixed float/signed-integer indirect fetch was incorrectly accepted");
+  Check(unexpected_reads == 0u,
+        "finite literal descriptors unexpectedly read specialization memory");
+}
+
 void TestMixedSamplerVariantsShareRuntimeDescriptor() {
   using namespace Libs::Graphics::ShaderRecompiler::IR;
   auto program = MixedSamplerProgram();
@@ -853,6 +924,7 @@ int main() {
   TestFailedMaterializationRejectsStage();
   TestSharedControlPredicates();
   TestFiniteImageRefreshReusesScalarReads();
+  TestFetchOnlyMixedNumericIndirectImages();
   TestMixedSamplerVariantsShareRuntimeDescriptor();
   std::puts("ResourceMaterializationTests: all cases passed");
   return 0;

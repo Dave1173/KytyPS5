@@ -590,6 +590,19 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			return SpecializationFail("indirect image specialization has no typed candidate");
 		}
 		const auto& image_class = specialization.images[exemplar];
+		// A fetch-only sampled image table can legitimately contain float and uint
+		// descriptors. The backend emits the appropriate typed fetch for each
+		// candidate, then preserves its raw component bits across the selection.
+		// Sampling/gathering requires additional typed sampler handling and still
+		// rejects mixed numeric classes here.
+		const bool fetch_only = program.info.images[root_index].resource_class == ImageResourceClass::Sampled &&
+		                        std::ranges::none_of(program.info.sampled_pairs, [&](const auto& pair) {
+			                        return pair.image == root_index;
+		                        });
+		const auto is_float_or_uint = [](Prospero::TextureNumericClass type) {
+			return type == Prospero::TextureNumericClass::Float ||
+			       type == Prospero::TextureNumericClass::Uint;
+		};
 		const auto is_2d = [](Decoder::ImageDimension dimension) {
 			return dimension == Decoder::ImageDimension::Dim2D ||
 			       dimension == Decoder::ImageDimension::Dim2DArray;
@@ -609,7 +622,10 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			}
 			const bool same_coordinates = image.dimension == image_class.dimension &&
 			                              image.cube == image_class.cube;
-			if (image.numeric_class != image_class.numeric_class ||
+			const bool compatible_numeric = image.numeric_class == image_class.numeric_class ||
+			                                (fetch_only && is_float_or_uint(image_class.numeric_class) &&
+			                                 is_float_or_uint(image.numeric_class));
+			if (!compatible_numeric ||
 			    (!same_coordinates && !(is_2d(image.dimension) && is_2d(image_class.dimension))) ||
 			    image.mip_count != image_class.mip_count ||
 			    image.conversion_format != image_class.conversion_format ||

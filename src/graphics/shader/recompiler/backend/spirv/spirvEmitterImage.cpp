@@ -762,7 +762,14 @@ void EmitImage(ValueEmitContext& ctx, const IR::Inst& inst) {
 					            descriptor, coord, spv::ImageOperandsLodMask,
 					            LodU32(ctx, mem, *address, mem.image_dimension));
 				        }
-				        return fetched;
+				        if (candidate.numeric_class == numeric_class) return fetched;
+				        // ImageFetch has the candidate's SPIR-V numeric type. For
+				        // heterogeneous fetch-only descriptor tables, pass its raw
+				        // component bits through the common switch result type.
+				        const auto bits = state.builder.AllocateId();
+				        state.builder.AddFunction(spv::OpBitcast,
+				                                  ImageVectorType(state, numeric_class, 4), bits, fetched);
+				        return bits;
 			            });
 			        return ResultVector(ctx, UnpackImageTexel(ctx, mem, color), numeric_class,
 			                            false, mem);
