@@ -12,12 +12,14 @@
 #include "common/threads.h"
 #include "common/timer.h"
 #include "common/stringUtils.h"
+#include "graphics/guest_gpu/graphicsRun.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/host_gpu/vulkanCommon.h"
 #include "graphics/presentation/renderDoc.h"
 #include "graphics/presentation/systemOverlay.h"
+#include "graphics/presentation/videoOut.h"
 #include "graphics/presentation/window/hostInput.h"
 #include "graphics/presentation/window/windowInternal.h"
 #include "kytyGitVersion.h"
@@ -738,6 +740,10 @@ void WindowContext::Run() {
 	constexpr uint64_t title_interval_ms = 1000;
 	auto               title_time        = SDL_GetTicks();
 	auto               title_frames      = loop.presented_frames.load(std::memory_order_relaxed);
+	uint64_t           last_frame_change = title_time;
+	uint64_t           last_stall_report = 0;
+	uint64_t           stall_frames      = title_frames;
+	bool               stall_reported    = false;
 
 	while (!loop.need_exit) {
 		if (loop.paused.load(std::memory_order_acquire)) {
@@ -756,6 +762,29 @@ void WindowContext::Run() {
 			if (frames != 0) {
 				UpdateTitle(frames, static_cast<double>(frames - title_frames) * 1000.0 /
 				                        static_cast<double>(elapsed));
+			}
+			if (frames != stall_frames) {
+				stall_frames = frames;
+				last_frame_change = now;
+				stall_reported = false;
+			} else if (frames != 0 && !loop.paused.load(std::memory_order_acquire) &&
+			           now - last_frame_change >= 5000u &&
+			           (!stall_reported || now - last_stall_report >= 10000u)) {
+				// No window events, GPU locks, or Vulkan queries are required here.
+				// A stalled GPU thread can still be diagnosed through relaxed atomics.
+				if (render_context != nullptr) {
+					const auto gpu = render_context->GetGpu().GetProgress();
+					const auto flip = VideoOut::GetVideoOutProgress();
+					Log::WriteToConsoleAndLog(fmt::format(
+					    "FrameStall: frames={} idle_ms={} guestGpu: queued={} finished={} "
+					    "slices={} yielded={} active_kind={} active_queue={} pending_commands={} "
+					    "videoOut: reserved={} ready={} presented={}\\n",
+					    frames, now - last_frame_change, gpu.queued, gpu.finished, gpu.slices,
+					    gpu.yielded, gpu.active_kind, gpu.active_queue, gpu.pending_commands,
+					    flip.reserved, flip.ready, flip.presented));
+				}
+				last_stall_report = now;
+				stall_reported = true;
 			}
 			title_time   = now;
 			title_frames = frames;
