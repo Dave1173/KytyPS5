@@ -52,6 +52,10 @@ public:
 		uint32_t active_kind = 0; // 0 idle, 1 command, 2 graphics, 3 compute, 4 flip, 5 suspend
 		uint32_t active_queue = 0;
 		uint32_t pending_commands = 0;
+		uint64_t pm4_packets = 0;
+		uint32_t pm4_opcode = 0;
+		uint32_t pm4_offset_dw = 0;
+		uint32_t pm4_in_handler = 0;
 	};
 	[[nodiscard]] Progress GetProgress() const noexcept;
 
@@ -100,6 +104,10 @@ private:
 	std::atomic<uint64_t>                           m_diag_yielded {0};
 	std::atomic<uint32_t>                           m_diag_active_kind {0};
 	std::atomic<uint32_t>                           m_diag_active_queue {0};
+	std::atomic<uint64_t>                           m_diag_pm4_packets {0};
+	std::atomic<uint32_t>                           m_diag_pm4_opcode {0};
+	std::atomic<uint32_t>                           m_diag_pm4_offset_dw {0};
+	std::atomic<uint32_t>                           m_diag_pm4_in_handler {0};
 	uint32_t                                       m_next_queue        = 0;
 	uint32_t                                       m_submission_count  = 0;
 	bool                                           m_processing        = false;
