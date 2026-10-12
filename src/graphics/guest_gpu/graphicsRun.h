@@ -43,6 +43,18 @@ public:
 	void              WaitForIdle();
 	[[nodiscard]] int GetFrameNum() const;
 
+	// Lock-free activity counters sampled by the presentation-stall watchdog.
+	struct Progress {
+		uint64_t queued = 0;
+		uint64_t finished = 0;
+		uint64_t slices = 0;
+		uint64_t yielded = 0;
+		uint32_t active_kind = 0; // 0 idle, 1 command, 2 graphics, 3 compute, 4 flip, 5 suspend
+		uint32_t active_queue = 0;
+		uint32_t pending_commands = 0;
+	};
+	[[nodiscard]] Progress GetProgress() const noexcept;
+
 	[[nodiscard]] static bool IsGpuThread() noexcept;
 
 private:
@@ -82,6 +94,12 @@ private:
 	std::array<std::deque<Submission>, QueueCount> m_queues;
 	std::deque<Common::UniqueFunction<void>>       m_commands;
 	std::atomic_uint32_t                           m_pending_commands {0};
+	std::atomic<uint64_t>                           m_diag_queued {0};
+	std::atomic<uint64_t>                           m_diag_finished {0};
+	std::atomic<uint64_t>                           m_diag_slices {0};
+	std::atomic<uint64_t>                           m_diag_yielded {0};
+	std::atomic<uint32_t>                           m_diag_active_kind {0};
+	std::atomic<uint32_t>                           m_diag_active_queue {0};
 	uint32_t                                       m_next_queue        = 0;
 	uint32_t                                       m_submission_count  = 0;
 	bool                                           m_processing        = false;

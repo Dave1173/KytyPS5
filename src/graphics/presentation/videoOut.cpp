@@ -38,6 +38,20 @@ namespace Libs::VideoOut {
 
 LIB_NAME("VideoOut", "VideoOut");
 
+namespace {
+std::atomic<uint64_t> g_diag_flip_reserved {0};
+std::atomic<uint64_t> g_diag_flip_ready {0};
+std::atomic<uint64_t> g_diag_flip_presented {0};
+} // namespace
+
+VideoOutProgress GetVideoOutProgress() noexcept {
+	return {
+	    .reserved = g_diag_flip_reserved.load(std::memory_order_relaxed),
+	    .ready = g_diag_flip_ready.load(std::memory_order_relaxed),
+	    .presented = g_diag_flip_presented.load(std::memory_order_relaxed),
+	};
+}
+
 namespace EventQueue = LibKernel::EventQueue;
 
 constexpr int      VIDEO_OUT_EVENT_FLIP                                 = 0;
@@ -964,6 +978,7 @@ bool FlipQueue::Reserve(VideoOutConfig& cfg, int index, int64_t flip_arg, FlipRe
 
 	pending.push_back(r);
 	request_id = r.id;
+	g_diag_flip_reserved.fetch_add(1, std::memory_order_relaxed);
 
 	cfg.flip_status.flipPendingNum++;
 	cfg.flip_status.submitProcessTimeCounter = r.submit_ptc;
@@ -1146,6 +1161,7 @@ void FlipQueue::Complete(uint64_t request_id) {
 			EXIT("completed GPU flip has no prepared recording, id=%" PRIu64 "\n", request_id);
 		}
 		request->state = RequestState::Ready;
+		g_diag_flip_ready.fetch_add(1, std::memory_order_relaxed);
 		m_submit_cond_var.Signal();
 		m_mutex.Unlock();
 		return;
@@ -1242,6 +1258,7 @@ bool FlipQueue::Flip(uint32_t micros) {
 	}
 	if (due) {
 		m_presenter.Present(std::span(layers.data(), count));
+		g_diag_flip_presented.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	m_mutex.Lock();
