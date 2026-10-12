@@ -192,6 +192,10 @@ GuestGpu::Progress GuestGpu::GetProgress() const noexcept {
 	    .active_kind = m_diag_active_kind.load(std::memory_order_relaxed),
 	    .active_queue = m_diag_active_queue.load(std::memory_order_relaxed),
 	    .pending_commands = m_pending_commands.load(std::memory_order_relaxed),
+	    .pm4_packets = m_diag_pm4_packets.load(std::memory_order_relaxed),
+	    .pm4_opcode = m_diag_pm4_opcode.load(std::memory_order_relaxed),
+	    .pm4_offset_dw = m_diag_pm4_offset_dw.load(std::memory_order_relaxed),
+	    .pm4_in_handler = m_diag_pm4_in_handler.load(std::memory_order_relaxed),
 	};
 }
 
@@ -767,8 +771,18 @@ void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
 			     total_dw - remaining_dw, packet_header);
 		}
 
+		if (g_gpu_state != nullptr) {
+			g_gpu_state->m_diag_pm4_opcode.store(opcode, std::memory_order_relaxed);
+			g_gpu_state->m_diag_pm4_offset_dw.store(cursor.offset_dw,
+			                                         std::memory_order_relaxed);
+			g_gpu_state->m_diag_pm4_in_handler.store(1u, std::memory_order_relaxed);
+		}
 		const auto packet_dw =
 		    handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+		if (g_gpu_state != nullptr) {
+			g_gpu_state->m_diag_pm4_packets.fetch_add(1, std::memory_order_relaxed);
+			g_gpu_state->m_diag_pm4_in_handler.store(0u, std::memory_order_relaxed);
+		}
 		EXIT_IF(packet_dw > remaining_dw);
 		if (execution.m_suspended) {
 			return;

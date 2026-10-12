@@ -778,9 +778,11 @@ void WindowContext::Run() {
 					Log::WriteToConsoleAndLog(fmt::format(
 					    "FrameStall: frames={} idle_ms={} guestGpu: queued={} finished={} "
 					    "slices={} yielded={} active_kind={} active_queue={} pending_commands={} "
+					    "pm4: packets={} opcode=0x{:02x} offset_dw={} in_handler={} "
 					    "videoOut: reserved={} ready={} presented={}\n",
 					    frames, now - last_frame_change, gpu.queued, gpu.finished, gpu.slices,
 					    gpu.yielded, gpu.active_kind, gpu.active_queue, gpu.pending_commands,
+					    gpu.pm4_packets, gpu.pm4_opcode, gpu.pm4_offset_dw, gpu.pm4_in_handler,
 					    flip.reserved, flip.ready, flip.presented));
 				}
 				last_stall_report = now;

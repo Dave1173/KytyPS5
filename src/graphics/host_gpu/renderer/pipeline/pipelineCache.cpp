@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fmt/format.h>
@@ -402,6 +403,15 @@ struct PipelineCache::ProgramCache {
 		} else {
 			options.wave_size = input_info.wave_size;
 		}
+		const auto diagnostic_begin = std::chrono::steady_clock::now();
+		const auto diagnostic_phase = [&](const char* phase) {
+			const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+			    std::chrono::steady_clock::now() - diagnostic_begin).count();
+			Log::WriteToConsoleAndLog(fmt::format(
+			    "ShaderCompilePhase: stage={} hash=0x{:016x} phase={} elapsed_ms={}\n",
+			    stage_name, options.shader_hash, phase, elapsed));
+		};
+		diagnostic_phase("start");
 		DumpShaderOriginal(stage_name, options.shader_hash, params.code);
 		ShaderRecompiler::ShaderSource source;
 		if (entry == programs.end()) source = ShaderRecompiler::PrepareShaderSource(params.code, options);
@@ -418,6 +428,7 @@ struct PipelineCache::ProgramCache {
 		} else {
 			translated = ShaderRecompiler::TranslateProgram(params.code, options);
 		}
+		diagnostic_phase("translated");
 		if (entry == programs.end()) {
 			auto retained = source.call ? std::make_unique<ShaderRecompiler::ShaderSource>(std::move(source)) : nullptr;
 			entry = programs.try_emplace(lookup_key,
@@ -433,9 +444,11 @@ struct PipelineCache::ProgramCache {
 				return permutation->handle;
 			}
 		}
+		diagnostic_phase("materialized");
 		entry->second.permutations.push_back(CompilePermutation(
 		    stage_name, options, std::move(translated), entry->second.specialization, push_data_cursor,
 		    entry->second.FunctionCode()));
+		diagnostic_phase("module_ready");
 		const auto& permutation = entry->second.permutations.back();
 		input_info.stage = {.program = &permutation.program, .resources = &entry->second.resources};
 		permutation.program.bindings.AdvancePushData(push_data_cursor);
