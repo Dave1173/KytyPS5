@@ -193,6 +193,38 @@ void TestPadPortOwnership() {
 	Shutdown();
 }
 
+void TestSharedKeyboardGamepadButtons() {
+	Controller controller;
+	PadData data {};
+
+	// Keyboard and gamepad can hold Cross simultaneously without stealing releases.
+	SetButton(HOST_INPUT_CONTROLLER_ID, PAD_BUTTON_CROSS, true);
+	SetButton(1, PAD_BUTTON_CROSS, true);
+	SetButton(HOST_INPUT_CONTROLLER_ID, PAD_BUTTON_CROSS, false);
+	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_CROSS) != 0,
+	      "releasing keyboard Cross incorrectly released a gamepad-held Cross");
+	SetButton(1, PAD_BUTTON_CROSS, false);
+	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_CROSS) == 0,
+	      "Cross remained down after both sources released it");
+
+	SetButton(1, PAD_BUTTON_SQUARE, true);
+	SetButton(HOST_INPUT_CONTROLLER_ID, PAD_BUTTON_SQUARE, true);
+	SetButton(1, PAD_BUTTON_SQUARE, false);
+	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_SQUARE) != 0,
+	      "releasing gamepad Square incorrectly released keyboard-held Square");
+	SetButton(HOST_INPUT_CONTROLLER_ID, PAD_BUTTON_SQUARE, false);
+	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_SQUARE) == 0,
+	      "Square remained down after both sources released it");
+
+	SetButton(HOST_INPUT_CONTROLLER_ID, PAD_BUTTON_TRIANGLE, true);
+	ResetInputState();
+	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_TRIANGLE) == 0,
+	      "input reset retained the keyboard button");
+	SetButton(1, PAD_BUTTON_TRIANGLE, true);
+	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_TRIANGLE) != 0,
+	      "input reset left a stale source state");
+}
+
 void TestSettingCycles() {
 	Controller controller;
 	for (auto setting:
@@ -554,6 +586,7 @@ void TestTriggerEffectState() {
 int main() {
 	Config::Initialize();
 	TestPadPortOwnership();
+	TestSharedKeyboardGamepadButtons();
 	TestSettingCycles();
 	TestGlobalControllerLevels();
 	// Each following test initializes another controller and requires strong defaults.
