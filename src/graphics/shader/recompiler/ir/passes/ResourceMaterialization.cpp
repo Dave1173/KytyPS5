@@ -639,10 +639,14 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 				// diagnosed without guessing which invariant rejected the table.
 				return SpecializationFail(fmt::format(
 				    "indirect image table at pc 0x{:08x} has incompatible candidates: "
-				    "root={} exemplar={} candidate={} "
+				    "root={} exemplar={} candidate={} class={} sampler_pairs={} "
 				    "numeric=({},{}) dimension=({},{}) cube=({},{}) "
 				    "mips=({},{}) conversion=({},{}) swizzle=(0x{:08x},0x{:08x})",
 				    program.info.images[root_index].first_use_pc, root_index, exemplar, candidate,
+				    static_cast<uint32_t>(program.info.images[root_index].resource_class),
+				    std::ranges::count_if(program.info.sampled_pairs, [&](const auto& pair) {
+				        return pair.image == root_index;
+				    }),
 				    static_cast<uint32_t>(image_class.numeric_class),
 				    static_cast<uint32_t>(image.numeric_class),
 				    static_cast<uint32_t>(image_class.dimension),
