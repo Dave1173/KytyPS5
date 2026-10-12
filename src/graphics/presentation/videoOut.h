@@ -24,6 +24,14 @@ struct VideoOutOutputOptions;
 struct VideoOutBuffers;
 struct VideoOutColorSettings;
 
+// Lock-free video-output progress counters used only for detecting startup stalls.
+struct VideoOutProgress {
+	uint64_t reserved = 0;
+	uint64_t ready = 0;
+	uint64_t presented = 0;
+};
+[[nodiscard]] VideoOutProgress GetVideoOutProgress() noexcept;
+
 class VideoOutDriver final {
 public:
 	struct Impl;
