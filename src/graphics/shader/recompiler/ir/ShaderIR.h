@@ -165,6 +165,9 @@ struct SamplerResource {
 	uint32_t first_use_pc          = 0;
 	// Native filtering/border variants share the original sampler's runtime descriptor.
 	uint32_t snapshot_index        = 0;
+	// Native sampler descriptor indices for float, integer and point-integer images.
+	// Variants share snapshot_index and can be selected for typed indirect images.
+	std::array<uint32_t, 3> class_variants {UINT32_MAX, UINT32_MAX, UINT32_MAX};
 	std::vector<uint32_t> indirect_resources;
 	bool     force_point_filtering = false;
 	bool     depth_compare         = false;
