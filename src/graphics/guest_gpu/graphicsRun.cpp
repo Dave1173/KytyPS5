@@ -183,6 +183,18 @@ int GuestGpu::GetFrameNum() const {
 	return m_done_num;
 }
 
+GuestGpu::Progress GuestGpu::GetProgress() const noexcept {
+	return {
+	    .queued = m_diag_queued.load(std::memory_order_relaxed),
+	    .finished = m_diag_finished.load(std::memory_order_relaxed),
+	    .slices = m_diag_slices.load(std::memory_order_relaxed),
+	    .yielded = m_diag_yielded.load(std::memory_order_relaxed),
+	    .active_kind = m_diag_active_kind.load(std::memory_order_relaxed),
+	    .active_queue = m_diag_active_queue.load(std::memory_order_relaxed),
+	    .pending_commands = m_pending_commands.load(std::memory_order_relaxed),
+	};
+}
+
 CommandProcessor& GuestGpu::GetProcessor(uint32_t queue_id) {
 	EXIT_IF(queue_id >= QueueCount);
 	if (queue_id == 0) {
@@ -428,6 +440,7 @@ void GuestGpu::Enqueue(Submission submission) {
 	EXIT_IF(!m_accepting);
 	m_queues[submission.queue_id].push_back(std::move(submission));
 	m_submission_count++;
+	m_diag_queued.fetch_add(1, std::memory_order_relaxed);
 	m_work_available.Signal();
 }
 
@@ -504,7 +517,9 @@ void GuestGpu::ThreadRun(void* data) {
 
 		if (command) {
 			EXIT_IF(g_current_processor != nullptr);
+			gpu->m_diag_active_kind.store(1u, std::memory_order_relaxed);
 			command();
+			gpu->m_diag_active_kind.store(0u, std::memory_order_relaxed);
 
 			Common::LockGuard lock(gpu->m_queue_mutex);
 			gpu->m_processing = false;
@@ -515,7 +530,20 @@ void GuestGpu::ThreadRun(void* data) {
 		}
 
 		EXIT_IF(!has_submission);
+		gpu->m_diag_active_queue.store(submission.queue_id, std::memory_order_relaxed);
+		gpu->m_diag_active_kind.store(
+		    submission.type == SubmissionType::Graphics ? 2u :
+		    submission.type == SubmissionType::Compute ? 3u :
+		    submission.type == SubmissionType::FlipPreparation ? 4u : 5u,
+		    std::memory_order_relaxed);
 		const bool complete = gpu->Process(submission);
+		gpu->m_diag_slices.fetch_add(1, std::memory_order_relaxed);
+		if (complete) {
+			gpu->m_diag_finished.fetch_add(1, std::memory_order_relaxed);
+		} else {
+			gpu->m_diag_yielded.fetch_add(1, std::memory_order_relaxed);
+		}
+		gpu->m_diag_active_kind.store(0u, std::memory_order_relaxed);
 
 		Common::LockGuard lock(gpu->m_queue_mutex);
 		if (!complete) {
