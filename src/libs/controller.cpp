@@ -168,6 +168,9 @@ private:
 	bool             m_obtained[STATES_MAX] {};
 	uint32_t         m_states_num    = 0;
 	uint32_t         m_first_state   = 0;
+	// Preserve independent ownership of digital buttons shared by keyboard and gamepad.
+	uint32_t         m_keyboard_buttons = 0;
+	uint32_t         m_gamepad_buttons  = 0;
 	uint8_t          m_next_touch_id = 1;
 	// The game's last requests, re-sent when their intensity setting changes.
 	std::array<uint8_t, 2> m_vibration {};
@@ -478,6 +481,8 @@ void GameController::CheckActive() {
 	m_active_id     = new_active_id;
 	m_connected     = new_connected;
 	m_state         = {};
+	m_keyboard_buttons = 0;
+	m_gamepad_buttons  = 0;
 	m_gyro_time     = 0;
 	m_up_reference_valid = false;
 	m_states_num    = 0;
@@ -508,7 +513,13 @@ void GameController::Button(int id, uint32_t button, bool down) {
 	if (m_active_id == id || id == HOST_INPUT_CONTROLLER_ID) {
 		m_state.time = LibKernel::KernelGetProcessTime();
 
-		m_state.buttons = down ? m_state.buttons | button : m_state.buttons & ~button;
+		// A keyboard release must not cancel a button still held on the physical pad,
+		// and vice versa. Both inputs share the same guest controller port.
+		auto& source_buttons =
+		    id == HOST_INPUT_CONTROLLER_ID ? m_keyboard_buttons : m_gamepad_buttons;
+		source_buttons = down ? source_buttons | button : source_buttons & ~button;
+		m_state.buttons = (m_state.buttons & ~button) |
+		                  ((m_keyboard_buttons | m_gamepad_buttons) & button);
 
 		AddState();
 	}
@@ -688,6 +699,8 @@ void GameController::ResetOrientation() {
 
 void GameController::ResetInputState() {
 	Common::LockGuard lock(m_mutex);
+	m_keyboard_buttons = 0;
+	m_gamepad_buttons  = 0;
 	m_state.buttons = 0;
 	std::fill_n(m_state.axes, 4, 128);
 	std::fill_n(m_state.axes + 4, 2, 0);
