@@ -778,7 +778,7 @@ void WindowContext::Run() {
 					Log::WriteToConsoleAndLog(fmt::format(
 					    "FrameStall: frames={} idle_ms={} guestGpu: queued={} finished={} "
 					    "slices={} yielded={} active_kind={} active_queue={} pending_commands={} "
-					    "videoOut: reserved={} ready={} presented={}\\n",
+					    "videoOut: reserved={} ready={} presented={}\n",
 					    frames, now - last_frame_change, gpu.queued, gpu.finished, gpu.slices,
 					    gpu.yielded, gpu.active_kind, gpu.active_queue, gpu.pending_commands,
 					    flip.reserved, flip.ready, flip.presented));
