@@ -828,7 +828,16 @@ void TestFetchOnlyMixedNumericIndirectImages() {
 
   ResourceSnapshot snapshot;
   ResourceSpecialization specialization;
-  Check(MaterializeResources(ExtractResourcePlan(program), {}, snapshot, specialization),
+  // Indirect sources require a specialization reader even for finite candidate
+  // sets whose descriptor words are literal constants. No reads are expected.
+  uint32_t unexpected_reads = 0;
+  const SrtRuntime runtime{
+      .userdata = &unexpected_reads,
+      .read_specialization_memory = +[](void *userdata, uint64_t, std::span<uint32_t>) {
+        ++*static_cast<uint32_t *>(userdata);
+        return false;
+      }};
+  Check(MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
         "fetch-only indirect image table rejected mixed float/uint descriptors");
   Check(snapshot.images.size() == 2 && specialization.images.size() == 2 &&
             specialization.images[0].numeric_class == TextureNumericClass::Float &&
@@ -842,15 +851,17 @@ void TestFetchOnlyMixedNumericIndirectImages() {
   program.descriptor_sources.push_back(sampler);
   program.info.samplers.push_back({.source = 3});
   program.info.sampled_pairs.push_back({.image = 0, .sampler = 0});
-  Check(!MaterializeResources(ExtractResourcePlan(program), {}, snapshot, specialization),
+  Check(!MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
         "mixed float/uint indirect sampling was incorrectly accepted");
 
   program.info.sampled_pairs.clear();
   program.info.samplers.clear();
   program.descriptor_sources[1].dwords[1] =
       Value(static_cast<uint32_t>(BufferFormat::k32SInt) << 20u);
-  Check(!MaterializeResources(ExtractResourcePlan(program), {}, snapshot, specialization),
+  Check(!MaterializeResources(ExtractResourcePlan(program), runtime, snapshot, specialization),
         "mixed float/signed-integer indirect fetch was incorrectly accepted");
+  Check(unexpected_reads == 0u,
+        "finite literal descriptors unexpectedly read specialization memory");
 }
 
 void TestMixedSamplerVariantsShareRuntimeDescriptor() {
