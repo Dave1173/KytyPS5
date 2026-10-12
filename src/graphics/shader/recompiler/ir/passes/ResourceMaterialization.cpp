@@ -590,11 +590,9 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			return SpecializationFail("indirect image specialization has no typed candidate");
 		}
 		const auto& image_class = specialization.images[exemplar];
-		// A fetch-only sampled image table can legitimately contain float and uint
-		// descriptors. The backend emits the appropriate typed fetch for each
-		// candidate, then preserves its raw component bits across the selection.
-		// Sampling/gathering requires additional typed sampler handling and still
-		// rejects mixed numeric classes here.
+		// Indirect sampled image tables may contain float and uint descriptors.
+		// The backend selects typed images and samplers per candidate, then
+		// combines the guest-visible component bits across the selection.
 		// Only sampled images with unconverted float/uint candidates can be
 		// dispatched through native typed image bindings. Storage operations,
 		// depth comparison, and converted mixed classes require separate handling.
