@@ -223,6 +223,27 @@ void TestSharedKeyboardGamepadButtons() {
 	SetButton(1, PAD_BUTTON_TRIANGLE, true);
 	Check(PadReadState(1, &data) == 0 && (data.buttons & PAD_BUTTON_TRIANGLE) != 0,
 	      "input reset left a stale source state");
+
+	// Simultaneous DIFFERENT buttons must not replace each other's bitmask.
+	SetButton(HOST_INPUT_CONTROLLER_ID, PAD_BUTTON_CROSS, true);
+	Check(PadReadState(1, &data) == 0 &&
+	          (data.buttons & (PAD_BUTTON_CROSS | PAD_BUTTON_TRIANGLE)) ==
+	              (PAD_BUTTON_CROSS | PAD_BUTTON_TRIANGLE),
+	      "different keyboard/gamepad buttons did not combine");
+	SetButton(1, PAD_BUTTON_TRIANGLE, false);
+	Check(PadReadState(1, &data) == 0 && data.buttons == PAD_BUTTON_CROSS,
+	      "gamepad release also cleared a different keyboard button");
+
+	// Switching the active physical gamepad must clear stale button ownership.
+	Connect(2);
+	Disconnect(1);
+	Check(GetActiveControllerId() == 2 && PadReadState(1, &data) == 0 &&
+	          data.buttons == 0,
+	      "active gamepad switch retained stale button presses");
+	SetButton(2, PAD_BUTTON_CROSS, true);
+	Check(PadReadState(1, &data) == 0 && data.buttons == PAD_BUTTON_CROSS,
+	      "replacement gamepad could not press Cross after switch");
+	SetButton(2, PAD_BUTTON_CROSS, false);
 }
 
 void TestSettingCycles() {
