@@ -590,15 +590,16 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			return SpecializationFail("indirect image specialization has no typed candidate");
 		}
 		const auto& image_class = specialization.images[exemplar];
-		// A fetch-only sampled image table can legitimately contain float and uint
-		// descriptors. The backend emits the appropriate typed fetch for each
-		// candidate, then preserves its raw component bits across the selection.
-		// Sampling/gathering requires additional typed sampler handling and still
-		// rejects mixed numeric classes here.
-		const bool fetch_only = program.info.images[root_index].resource_class == ImageResourceClass::Sampled &&
-		                        std::ranges::none_of(program.info.sampled_pairs, [&](const auto& pair) {
-			                        return pair.image == root_index;
-		                        });
+		// Indirect sampled image tables may contain float and uint descriptors.
+		// The backend selects typed images and samplers per candidate, then
+		// combines the guest-visible component bits across the selection.
+		// Only sampled images with unconverted float/uint candidates can be
+		// dispatched through native typed image bindings. Storage operations,
+		// depth comparison, and converted mixed classes require separate handling.
+		const auto& root_image = program.info.images[root_index];
+		const bool mixed_numeric_supported = root_image.resource_class == ImageResourceClass::Sampled &&
+		                                     !root_image.depth_compare &&
+		                                     image_class.conversion_format == Prospero::BufferFormat::kInvalid;
 		const auto is_float_or_uint = [](Prospero::TextureNumericClass type) {
 			return type == Prospero::TextureNumericClass::Float ||
 			       type == Prospero::TextureNumericClass::Uint;
@@ -623,8 +624,9 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			const bool same_coordinates = image.dimension == image_class.dimension &&
 			                              image.cube == image_class.cube;
 			const bool compatible_numeric = image.numeric_class == image_class.numeric_class ||
-			                                (fetch_only && is_float_or_uint(image_class.numeric_class) &&
-			                                 is_float_or_uint(image.numeric_class));
+			                                (mixed_numeric_supported && is_float_or_uint(image_class.numeric_class) &&
+			                                 is_float_or_uint(image.numeric_class) &&
+			                                 image.conversion_format == Prospero::BufferFormat::kInvalid);
 			if (!compatible_numeric ||
 			    (!same_coordinates && !(is_2d(image.dimension) && is_2d(image_class.dimension))) ||
 			    image.mip_count != image_class.mip_count ||
@@ -635,10 +637,14 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 				// diagnosed without guessing which invariant rejected the table.
 				return SpecializationFail(fmt::format(
 				    "indirect image table at pc 0x{:08x} has incompatible candidates: "
-				    "root={} exemplar={} candidate={} "
+				    "root={} exemplar={} candidate={} class={} sampler_pairs={} "
 				    "numeric=({},{}) dimension=({},{}) cube=({},{}) "
 				    "mips=({},{}) conversion=({},{}) swizzle=(0x{:08x},0x{:08x})",
 				    program.info.images[root_index].first_use_pc, root_index, exemplar, candidate,
+				    static_cast<uint32_t>(program.info.images[root_index].resource_class),
+				    std::ranges::count_if(program.info.sampled_pairs, [&](const auto& pair) {
+				        return pair.image == root_index;
+				    }),
 				    static_cast<uint32_t>(image_class.numeric_class),
 				    static_cast<uint32_t>(image.numeric_class),
 				    static_cast<uint32_t>(image_class.dimension),
@@ -664,7 +670,13 @@ bool BuildSamplerPlan(const ShaderInfo& base, SamplerPlan& plan) {
 		if (pair.image >= base.images.size() || pair.sampler >= base.samplers.size()) {
 			return false;
 		}
+		// Indirect images can contain float and uint candidates with different
+		// Vulkan sampler requirements. Reserve each required sampler variant.
 		usage[pair.sampler] |= 1u << static_cast<uint32_t>(ClassifySampler(base.images[pair.image]));
+		for (const auto resource: base.images[pair.image].indirect_resources) {
+			if (resource >= base.images.size()) return false;
+			usage[pair.sampler] |= 1u << static_cast<uint32_t>(ClassifySampler(base.images[resource]));
+		}
 		for (const auto candidate: base.samplers[pair.sampler].indirect_resources) {
 			if (candidate >= base.samplers.size()) return false;
 			usage[candidate] |= usage[pair.sampler];
@@ -1337,6 +1349,7 @@ void ApplyResourceSpecialization(Program& program, const ResourceSpecialization&
 			samplers.push_back(samplers[binding.source]);
 		}
 		samplers[index].snapshot_index = binding.source;
+		samplers[index].class_variants = sampler_plan.mapping[binding.source];
 		samplers[index].force_point_filtering = binding.type == SamplerClass::PointInteger;
 		samplers[index].integer_border        = binding.type != SamplerClass::Float;
 	}
