@@ -16,6 +16,9 @@
 #include <cstdio>
 #include <deque>
 #include <optional>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace Libs::Graphics {
 
@@ -116,10 +119,18 @@ struct CommandScheduler::GpuTimer {
 			pool = nullptr;
 		}
 		period_ns = graphics.GetPhysicalDeviceProperties().limits.timestampPeriod;
+		info.queryCount = ShaderBlockSize * ShaderBlocks * 2;
+		if (graphics.device.createQueryPool(&info, nullptr, &shader_pool) !=
+		    vk::Result::eSuccess) {
+			shader_pool = nullptr;
+		}
 	}
 	~GpuTimer() {
 		if (pool) {
 			graphics.device.destroyQueryPool(pool, nullptr);
+		}
+		if (shader_pool) {
+			graphics.device.destroyQueryPool(shader_pool, nullptr);
 		}
 	}
 	KYTY_CLASS_NO_COPY(GpuTimer);
@@ -131,6 +142,7 @@ struct CommandScheduler::GpuTimer {
 
 	// GPU thread, a new command buffer.
 	void Begin(vk::CommandBuffer command) {
+		ShaderBegin(command);
 		open_slot = UINT32_MAX;
 		if (!pool || !Enabled() || pending.size() >= Slots) {
 			return;
@@ -149,14 +161,104 @@ struct CommandScheduler::GpuTimer {
 	}
 
 	void Submitted(uint64_t tick) {
+		if (shader_block != UINT32_MAX) {
+			shader_pending.push_back({tick, shader_block, std::move(shader_tags)});
+			shader_tags.clear();
+			shader_block = UINT32_MAX;
+		}
 		if (open_slot != UINT32_MAX) {
 			pending.push_back({tick, open_slot});
 			open_slot = UINT32_MAX;
 		}
 	}
 
+	// KYTY_SHADER_GPU_TIME: each command buffer takes a block of ShaderBlockSize query pairs,
+	// reset at its start (outside any render pass); draws and dispatches past the block, or
+	// while every block is in flight, are not timed.
+	void ShaderBegin(vk::CommandBuffer command) {
+		shader_block = UINT32_MAX;
+		shader_used  = 0;
+		shader_open  = UINT32_MAX;
+		shader_tags.clear();
+		if (!shader_pool || !CommandRecorder::ShaderTimeEnabled()) {
+			return;
+		}
+		for (uint32_t block = 0; block < ShaderBlocks; block++) {
+			if (!shader_block_busy[block]) {
+				shader_block_busy[block] = true;
+				shader_block             = block;
+				command.resetQueryPool(shader_pool, block * ShaderBlockSize * 2,
+				                       ShaderBlockSize * 2);
+				return;
+			}
+		}
+	}
+
+	void ShaderTimeBegin(vk::CommandBuffer command, uint64_t hash, bool compute) {
+		shader_open = UINT32_MAX;
+		if (shader_block == UINT32_MAX || shader_used >= ShaderBlockSize) {
+			return;
+		}
+		shader_open = shader_block * ShaderBlockSize + shader_used++;
+		command.writeTimestamp2(vk::PipelineStageFlagBits2::eTopOfPipe, shader_pool,
+		                        shader_open * 2);
+		shader_tags.push_back({hash, shader_open, compute});
+	}
+
+	void ShaderTimeEnd(vk::CommandBuffer command) {
+		if (shader_open != UINT32_MAX) {
+			command.writeTimestamp2(vk::PipelineStageFlagBits2::eBottomOfPipe, shader_pool,
+			                        shader_open * 2 + 1);
+			shader_open = UINT32_MAX;
+		}
+	}
+
+	template <typename IsFree>
+	void CollectShaders(IsFree&& is_free) {
+		while (!shader_pending.empty() && is_free(shader_pending.front().tick)) {
+			auto& done = shader_pending.front();
+			for (const auto& tag: done.tags) {
+				std::array<uint64_t, 2> stamps {};
+				if (graphics.device.getQueryPoolResults(
+				        shader_pool, tag.slot * 2, 2, sizeof(stamps), stamps.data(),
+				        sizeof(uint64_t), vk::QueryResultFlagBits::e64) == vk::Result::eSuccess &&
+				    stamps[1] >= stamps[0]) {
+					auto& total = shader_totals[tag.hash];
+					total.ns += static_cast<double>(stamps[1] - stamps[0]) * period_ns;
+					total.calls++;
+					total.compute = tag.compute;
+				}
+			}
+			shader_block_busy[done.block] = false;
+			shader_pending.pop_front();
+		}
+		const auto now     = std::chrono::steady_clock::now();
+		const auto elapsed = std::chrono::duration<double>(now - shader_report).count();
+		if (elapsed >= 5.0) {
+			if (!shader_totals.empty()) {
+				std::vector<std::pair<uint64_t, ShaderTotal>> sorted(shader_totals.begin(),
+				                                                     shader_totals.end());
+				const size_t top = std::min<size_t>(sorted.size(), 20);
+				std::partial_sort(sorted.begin(), sorted.begin() + static_cast<ptrdiff_t>(top),
+				                  sorted.end(), [](const auto& a, const auto& b) {
+					                  return a.second.ns > b.second.ns;
+				                  });
+				::printf("Shader GPU time (5 s): top 20\n");
+				for (size_t i = 0; i < top; i++) {
+					::printf("  %016" PRIx64 " %s %.3f ms in %" PRIu64 " calls\n", sorted[i].first,
+					         sorted[i].second.compute ? "CS" : "PS", sorted[i].second.ns / 1e6,
+					         sorted[i].second.calls);
+				}
+				std::fflush(stdout);
+			}
+			shader_totals.clear();
+			shader_report = now;
+		}
+	}
+
 	template <typename IsFree>
 	void Collect(IsFree&& is_free) {
+		CollectShaders(is_free);
 		while (!pending.empty() && is_free(pending.front().tick)) {
 			const auto              slot = pending.front().slot;
 			std::array<uint64_t, 2> stamps {};
@@ -207,7 +309,41 @@ struct CommandScheduler::GpuTimer {
 	double                                busy_ns  = 0;
 	uint64_t                              buffers  = 0;
 	std::chrono::steady_clock::time_point report   = std::chrono::steady_clock::now();
+	static constexpr uint32_t ShaderBlockSize = 1024;
+	static constexpr uint32_t ShaderBlocks    = 32;
+	struct ShaderTag {
+		uint64_t hash    = 0;
+		uint32_t slot    = 0;
+		bool     compute = false;
+	};
+	struct ShaderPending {
+		uint64_t               tick  = 0;
+		uint32_t               block = 0;
+		std::vector<ShaderTag> tags;
+	};
+	struct ShaderTotal {
+		double   ns      = 0;
+		uint64_t calls   = 0;
+		bool     compute = false;
+	};
+	vk::QueryPool                             shader_pool  = nullptr;
+	std::array<bool, ShaderBlocks>            shader_block_busy {};
+	uint32_t                                  shader_block = UINT32_MAX;
+	uint32_t                                  shader_used  = 0;
+	uint32_t                                  shader_open  = UINT32_MAX;
+	std::vector<ShaderTag>                    shader_tags;
+	std::deque<ShaderPending>                 shader_pending;
+	std::unordered_map<uint64_t, ShaderTotal> shader_totals;
+	std::chrono::steady_clock::time_point     shader_report = std::chrono::steady_clock::now();
 };
+
+void CommandScheduler::ShaderTimeBegin(vk::CommandBuffer command, uint64_t hash, bool compute) {
+	m_gpu_timer->ShaderTimeBegin(command, hash, compute);
+}
+
+void CommandScheduler::ShaderTimeEnd(vk::CommandBuffer command) {
+	m_gpu_timer->ShaderTimeEnd(command);
+}
 
 CommandScheduler::CommandScheduler(RenderContext& context, GraphicContext& graphics)
     : m_gpu_timer(std::make_unique<GpuTimer>(graphics)), m_master(graphics), m_context(context),

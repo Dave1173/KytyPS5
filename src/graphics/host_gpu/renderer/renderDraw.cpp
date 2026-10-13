@@ -1346,12 +1346,25 @@ void RenderExecutor::ExecutePreparedDrawResolved(uint64_t submit_id, CommandBuff
 	if (!draw.IsIndexed()) {
 		SetDrawDebugPhase(buffer, submit_id, draw, 0x500u, ps_hash);
 	}
+	const bool shader_time = CommandRecorder::ShaderTimeEnabled();
+	if (shader_time) {
+		uint64_t time_hash = ps_hash;
+		for (const auto* stage: stages) {
+			if (time_hash == 0 && stage->runtime != nullptr && *stage->runtime) {
+				time_hash = stage->runtime->program->shader_hash;
+			}
+		}
+		vk_buffer.shaderTimeBegin(time_hash, false);
+	}
 	if (mesh_active) {
 		vk_buffer.drawMeshTasksEXT(mesh_groups, draw.instance_count, 1);
 	} else {
 		EmitDrawPrimitives(ucfg, vk_buffer, draw, emit,
 		                   indirect_buffer != nullptr ? indirect_buffer->Handle() : nullptr,
 		                   indirect_offset);
+	}
+	if (shader_time) {
+		vk_buffer.shaderTimeEnd();
 	}
 
 	if (!draw.IsIndexed()) {

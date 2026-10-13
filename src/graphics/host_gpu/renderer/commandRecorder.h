@@ -2,6 +2,7 @@
 #define EMULATOR_SRC_GRAPHICS_HOST_GPU_RENDERER_COMMANDRECORDER_H_
 
 #include "common/assert.h"
+#include "common/liveSwitches.h"
 #include "graphics/host_gpu/renderer/commandScheduler.h"
 #include "graphics/host_gpu/vulkanCommon.h"
 
@@ -62,6 +63,28 @@ public:
 	}
 	void dispatchIndirect(vk::Buffer buffer, vk::DeviceSize offset) const {
 		Run([=](vk::CommandBuffer command) { command.dispatchIndirect(buffer, offset); });
+	}
+	// Research: KYTY_SHADER_GPU_TIME (live, default 0) times every draw and dispatch on the GPU
+	// and reports the 20 shaders with the most GPU time every 5 s.
+	[[nodiscard]] static bool ShaderTimeEnabled() {
+		static auto& enabled = Common::LiveSwitches::Get("KYTY_SHADER_GPU_TIME", 0);
+		return enabled.load(std::memory_order_relaxed) != 0;
+	}
+	void shaderTimeBegin(uint64_t hash, bool compute) const {
+		if (m_scheduler == nullptr) {
+			return;
+		}
+		auto* scheduler = m_scheduler;
+		Run([=](vk::CommandBuffer command) {
+			scheduler->ShaderTimeBegin(command, hash, compute);
+		});
+	}
+	void shaderTimeEnd() const {
+		if (m_scheduler == nullptr) {
+			return;
+		}
+		auto* scheduler = m_scheduler;
+		Run([=](vk::CommandBuffer command) { scheduler->ShaderTimeEnd(command); });
 	}
 	void bindIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset, vk::IndexType type) const {
 		Run([=](vk::CommandBuffer command) { command.bindIndexBuffer(buffer, offset, type); });

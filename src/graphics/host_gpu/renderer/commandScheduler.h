@@ -38,6 +38,10 @@ public:
 	void           FlushAndWait();
 	void           Finish();
 	CommandBuffer& BeginCommand();
+	// KYTY_SHADER_GPU_TIME: a timestamp pair around one draw or dispatch, tagged with the shader
+	// hash. Called on the thread that records the command buffer (CommandRecorder forwards it).
+	void ShaderTimeBegin(vk::CommandBuffer command, uint64_t hash, bool compute);
+	void ShaderTimeEnd(vk::CommandBuffer command);
 	uint64_t       Submit(SubmitInfo submit = {});
 	// Deferred callbacks can observe an externally owned drain, but cannot initiate shutdown:
 	// the priority runner cannot join itself.

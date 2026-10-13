@@ -574,7 +574,14 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, CommandBuffer& buffer,
 			ShaderWriteHazardBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 		}
 		vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
+		const bool shader_time = CommandRecorder::ShaderTimeEnabled();
+		if (shader_time) {
+			vk_buffer.shaderTimeBegin(program.shader_hash, true);
+		}
 		vk_buffer.dispatch(thread_group_x, thread_group_y, thread_group_z);
+		if (shader_time) {
+			vk_buffer.shaderTimeEnd();
+		}
 
 		// The removed host fence also ordered read-only dispatches before later writers.
 		ShaderAccessBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
@@ -669,7 +676,14 @@ void RenderExecutor::DispatchIndirect(uint64_t submit_id, CommandBuffer& buffer,
 		        vk::PipelineStageFlagBits::eTransfer,
 		    vk::PipelineStageFlagBits::eDrawIndirect, {}, 1, &barrier, 0, nullptr, 0, nullptr);
 		vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
+		const bool shader_time = CommandRecorder::ShaderTimeEnabled();
+		if (shader_time) {
+			vk_buffer.shaderTimeBegin(program.shader_hash, true);
+		}
 		vk_buffer.dispatchIndirect(indirect_buffer, indirect_offset);
+		if (shader_time) {
+			vk_buffer.shaderTimeEnd();
+		}
 		ShaderAccessBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	} while (recovery.Retry());
 	ResetBindings();
