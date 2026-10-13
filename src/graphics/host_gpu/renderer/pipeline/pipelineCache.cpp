@@ -1,3 +1,4 @@
+#include "graphics/frameCosts.h"
 #include "graphics/host_gpu/renderer/pipeline/pipelineCache.h"
 
 #include "common/assert.h"
@@ -777,6 +778,7 @@ struct PipelineCache::ProgramCache {
 	                               ShaderRecompiler::TranslateResult            translated,
 	                               ShaderRecompiler::IR::ResourceSpecialization specialization,
 	                               uint32_t push_data_start_dword) {
+		FrameCosts::Timer cost_timer {FrameCosts::g_shader_us, FrameCosts::g_shader_count};
 		auto result = ShaderRecompiler::CompileProgram(std::move(translated), options,
 		                                               specialization, push_data_start_dword);
 		if (!ValidateShaderSpirv(options.dump_label, options.shader_hash, result.spirv)) {
@@ -1638,7 +1640,10 @@ PipelineCache::Pipeline* PipelineCache::TryGetGraphicsPipeline(
 		job->driver_cache = m_driver_cache;
 		cached->pending   = job;
 		m_compiler->Submit(job);
-		(void)m_compiler->Wait(*job, g_pipeline_wait);
+		{
+			FrameCosts::Timer cost_timer {FrameCosts::g_pipeline_wait_us, FrameCosts::g_pipeline_waits};
+			(void)m_compiler->Wait(*job, g_pipeline_wait);
+		}
 		auto [iter, inserted] = m_graphics_pipelines.emplace(std::move(key), std::move(cached));
 		EXIT_IF(!inserted);
 		auto& pipeline = *iter->second;

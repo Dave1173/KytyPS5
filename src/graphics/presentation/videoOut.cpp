@@ -1,3 +1,4 @@
+#include "graphics/frameCosts.h"
 #include <cstdio>
 #include <chrono>
 #include "graphics/presentation/videoOut.h"
@@ -1216,9 +1217,12 @@ static void NoteFrameStats() {
 	for (const float v: intervals) sum += v;
 	std::sort(intervals.begin(), intervals.end());
 	const float p99 = intervals[std::min(intervals.size() - 1, intervals.size() * 99 / 100)];
-	::printf("Frames (5 s): %.1f fps, frame %.2f ms avg, %.2f ms p99, %.2f ms max\n",
+	const auto shader_us = FrameCosts::g_shader_us.exchange(0), shaders = FrameCosts::g_shader_count.exchange(0);
+	const auto wait_us = FrameCosts::g_pipeline_wait_us.exchange(0), waits = FrameCosts::g_pipeline_waits.exchange(0);
+	::printf("Frames (5 s): %.1f fps, frame %.2f ms avg, %.2f ms p99, %.2f ms max; shaders %llu in %.0f ms, pipeline waits %llu in %.0f ms\n",
 	         static_cast<double>(intervals.size()) / seconds, sum / static_cast<double>(intervals.size()),
-	         static_cast<double>(p99), static_cast<double>(intervals.back()));
+	         static_cast<double>(p99), static_cast<double>(intervals.back()), static_cast<unsigned long long>(shaders),
+	         static_cast<double>(shader_us) / 1000.0, static_cast<unsigned long long>(waits), static_cast<double>(wait_us) / 1000.0);
 	std::fflush(stdout);
 	intervals.clear();
 	window = now;
