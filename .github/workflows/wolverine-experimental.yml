@@ -1,0 +1,182 @@
+name: Wolverine Experimental Windows EXE
+
+on:
+  push:
+    branches: [experimental/wolverine-senaxx-fast-compute]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SCCACHE_GHA_ENABLED: "true"
+
+jobs:
+  windows:
+    name: Build Senaxx Wolverine Experiment (Windows)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout newer Senaxx KytyPS5 source
+        uses: actions/checkout@v4
+        with:
+          repository: Senaxx/KytyPS5
+          ref: KytyPS5-2026-10-09-4802886
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Add optional faster Vulkan compute pipeline path
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          path = Path("src/graphics/host_gpu/renderer/pipeline/shaders.cpp")
+          source = path.read_text(encoding="utf-8")
+          include = "#include <algorithm>"
+          if source.count(include) != 1:
+              raise SystemExit("Unexpected shader source includes; refusing unsafe patch.")
+          source = source.replace(include, include + "\n#include <cstdlib>", 1)
+          marker = "info.basePipelineIndex = -1;"
+          if source.count(marker) != 1:
+              raise SystemExit("Compute pipeline creation changed upstream; refusing unsafe patch.")
+          source = source.replace(marker, marker + """
+          // Opt-in only; this Vulkan flag can reduce first-use compiler stalls,
+          // but sometimes reduces runtime shader performance. It does NOT fix
+          // incompatible shaders or allow skipping essential drawing work.
+          if (const char* fast = std::getenv("KYTY_WOLVERINE_FAST_COMPUTE");
+              fast != nullptr && fast[0] == '1' && fast[1] == '\\0') {
+              info.flags = vk::PipelineCreateFlagBits::eDisableOptimization;
+          }
+          """, 1)
+          path.write_text(source, encoding="utf-8")
+          print("Patched optional compute pipeline creation fast mode.")
+          '@ | python -
+
+      - name: Setup Visual Studio environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Locate vcpkg
+        id: vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Split-Path (Get-Command vcpkg).Source
+          $portHash = (Get-FileHash "$vcpkgRoot\ports\glslang\vcpkg.json" -Algorithm SHA256).Hash
+          "root=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "port_hash=$($portHash.ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Cache glslang
+        id: glslang_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.vcpkg.outputs.root }}\installed\x64-windows
+          key: glslang-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg.outputs.port_hash }}-tools-opt
+
+      - name: Install glslang
+        shell: pwsh
+        run: |
+          $vcpkgRoot = "${{ steps.vcpkg.outputs.root }}"
+          if ("${{ steps.glslang_cache.outputs.cache-hit }}" -ne "true") {
+            vcpkg install glslang[tools,opt]:x64-windows
+          }
+          "$vcpkgRoot\installed\x64-windows\tools\glslang" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Qt 6.10.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Configure
+        shell: cmd
+        run: |
+          cmake -S . -B _Build/windows ^
+            -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON ^
+            -DKYTY_BUILD_ORIGIN=Experimental ^
+            -DKYTY_BUILD_REPOSITORY=Dave1173/KytyPS5 ^
+            -DKYTY_RELEASE_TAG=Wolverine-Senaxx-Experiment ^
+            -DCMAKE_C_COMPILER=clang-cl ^
+            -DCMAKE_CXX_COMPILER=clang-cl ^
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
+
+      - name: Build Windows executable
+        shell: cmd
+        run: |
+          cmake --build _Build/windows --target launcher ^
+            shader_recompiler_compute_tests resource_tracking_tests ^
+            resource_materialization_tests --parallel
+
+      - name: Run resource and shader regression tests
+        shell: cmd
+        run: |
+          ctest --test-dir _Build/windows --output-on-failure -R "^(resource_tracking|resource_materialization)$"
+
+      - name: Install
+        shell: cmd
+        run: |
+          cmake --install _Build/windows --prefix _Build/windows/install
+
+      - name: Add Wolverine startup profiles and instructions
+        shell: pwsh
+        run: |
+          $target = "_Build/windows/install"
+          @'
+          @echo off
+          cd /d "%~dp0"
+          set "KYTY_WOLVERINE_FAST_COMPUTE=1"
+          start "" "%~dp0launcher.exe"
+          '@ | Set-Content -Path "$target/START-WOLVERINE-FAST.cmd" -Encoding ascii
+
+          @'
+          @echo off
+          cd /d "%~dp0"
+          set "KYTY_WOLVERINE_FAST_COMPUTE=0"
+          start "" "%~dp0launcher.exe"
+          '@ | Set-Content -Path "$target/START-WOLVERINE-NORMAL.cmd" -Encoding ascii
+
+          @'
+          WOLVERINE EXPERIMENTAL KYTYPS5 BUILD
+          ======================================
+          Based on Senaxx/KytyPS5 2026-10-09 release source, rebuilt with one
+          opt-in Vulkan compute-pipeline creation option.
+          Credit/source: https://github.com/Senaxx/KytyPS5
+
+          1. Extract this artifact to a brand NEW folder.
+          2. Double-click START-WOLVERINE-FAST.cmd to test faster pipeline creation.
+             If performance or graphics regress, use START-WOLVERINE-NORMAL.cmd.
+          3. In per-game settings: 1920x1080, present Immediate, shader optimization None.
+             Select the NVIDIA RTX laptop GPU, turn on image readback, tessellation,
+             bindless textures, and Windows red-zone crash protection.
+          4. To preserve texture output, test with Skip shaders EMPTY initially.
+             The six hashes in the reference screenshot intentionally prevent
+             selected shaders from running, so missing effects/textures are expected.
+          5. Do not disable the Intel/AMD CPU compatibility option blindly;
+             Intel CPUs may require emulation of AMD-only instructions.
+
+          This is not verified to boot gameplay. No game files or patches are included.
+          If selecting New Game crashes, save the entire final console log, game
+          update version, and NVIDIA driver version to determine the actual cause.
+          '@ | Set-Content -Path "$target/README-WOLVERINE.txt" -Encoding utf8
+
+          if (-not (Test-Path "$target/launcher.exe") -or
+              -not (Test-Path "$target/kyty_emulator.exe")) {
+            throw "Required Windows executables were not installed."
+          }
+
+      - name: Upload custom Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wolverine-Experimental-Windows-x64
+          path: _Build/windows/install/**
+          if-no-files-found: error
+          retention-days: 14
