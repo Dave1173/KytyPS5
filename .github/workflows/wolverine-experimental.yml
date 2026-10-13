@@ -145,6 +145,16 @@ jobs:
           '@ | Set-Content -Path "$target/START-WOLVERINE-NORMAL.cmd" -Encoding ascii
 
           @'
+          @echo off
+          cd /d "%~dp0"
+          rem Try compiling the six reference shaders instead of skipping them.
+          rem Turn off driver optimization only for these shader hashes.
+          set "KYTY_WOLVERINE_FAST_COMPUTE=0"
+          set "KYTY_DISABLE_OPTIMIZATION_HASHES=bad108374fb72e9f,4e7f2c6bb9b158a1,8bfd230b9cd875a2,c4df2a00067e0666,dc76e1223a9bf673,e6d76d24f59f8015"
+          start "" "%~dp0launcher.exe"
+          '@ | Set-Content -Path "$target/START-WOLVERINE-TEXTURES.cmd" -Encoding ascii
+
+          @'
           WOLVERINE EXPERIMENTAL KYTYPS5 BUILD
           ======================================
           Based on Senaxx/KytyPS5 2026-10-09 release source, rebuilt with one
@@ -154,13 +164,18 @@ jobs:
           1. Extract this artifact to a brand NEW folder.
           2. Double-click START-WOLVERINE-FAST.cmd to test faster pipeline creation.
              If performance or graphics regress, use START-WOLVERINE-NORMAL.cmd.
-          3. In per-game settings: 1920x1080, present Immediate, shader optimization None.
+          3. For missing textures, first try START-WOLVERINE-TEXTURES.cmd.
+             This uses the six reference hashes but asks Vulkan to compile them
+             with driver optimization disabled rather than skipping them.
+             The Kyty "Skip shaders" field must be EMPTY for that experiment.
+             The six shaders can still fail for reasons other than driver optimization.
+          4. In per-game settings: 1920x1080, present Immediate, shader optimization None.
              Select the NVIDIA RTX laptop GPU, turn on image readback, tessellation,
              bindless textures, and Windows red-zone crash protection.
-          4. To preserve texture output, test with Skip shaders EMPTY initially.
+          5. To preserve texture output, test with Skip shaders EMPTY initially.
              The six hashes in the reference screenshot intentionally prevent
              selected shaders from running, so missing effects/textures are expected.
-          5. Do not disable the Intel/AMD CPU compatibility option blindly;
+          6. Do not disable the Intel/AMD CPU compatibility option blindly;
              Intel CPUs may require emulation of AMD-only instructions.
 
           This is not verified to boot gameplay. No game files or patches are included.
