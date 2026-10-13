@@ -239,7 +239,7 @@ struct CommandScheduler::GpuTimer {
 				std::vector<std::pair<uint64_t, ShaderTotal>> sorted(shader_totals.begin(),
 				                                                     shader_totals.end());
 				const size_t top = std::min<size_t>(sorted.size(), 20);
-				std::partial_sort(sorted.begin(), sorted.begin() + static_cast<ptrdiff_t>(top),
+				std::partial_sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(top),
 				                  sorted.end(), [](const auto& a, const auto& b) {
 					                  return a.second.ns > b.second.ns;
 				                  });
