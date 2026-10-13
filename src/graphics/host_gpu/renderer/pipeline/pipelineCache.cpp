@@ -31,6 +31,7 @@
 #include <limits>
 #include <span>
 #include <spirv-tools/libspirv.hpp>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -478,6 +479,103 @@ struct PipelineCache::ProgramCache {
 			    same_code_keys, entry->second.permutations.size(), same_specialization,
 			    same_layout, source_changed ? 1 : 0, input_info.workgroup_counts[0],
 			    input_info.workgroup_counts[1], input_info.workgroup_counts[2]));
+			// Show why identical shader code acquired a different *static* key.
+			// Some fields legitimately change generated SPIR-V, so do not merge keys.
+			if (was_new_program_key && same_code_keys > 1) {
+				static constexpr std::array<const char*, 14> field_names {{
+				    "sgpr", "wave_float", "host_subgroup", "thread_ids", "lds",
+				    "scratch", "flags", "threads_x", "group_id_x", "threads_y",
+				    "group_id_y", "threads_z", "group_id_z", "tg_size"
+				}};
+				const ProgramKey* nearest = nullptr;
+				size_t nearest_diffs = SIZE_MAX;
+				for (const auto& [prior, unused]: programs) {
+					(void)unused;
+					if (prior.stage != stage || prior.hash != params.hash ||
+					    prior == lookup_key) continue;
+					const auto n = std::min(prior.static_state.size(), lookup_key.static_state.size());
+					size_t count = std::max(prior.static_state.size(), lookup_key.static_state.size()) - n;
+					for (size_t i = 0; i < n; ++i) {
+						if (prior.static_state[i] != lookup_key.static_state[i]) ++count;
+					}
+					if (count < nearest_diffs) {
+						nearest = &prior;
+						nearest_diffs = count;
+					}
+				}
+				if (nearest != nullptr) {
+					std::string detail;
+					const auto n = std::min(nearest->static_state.size(), lookup_key.static_state.size());
+					for (size_t i = 0; i < n; ++i) {
+						if (nearest->static_state[i] == lookup_key.static_state[i]) continue;
+						if (!detail.empty()) detail += ", ";
+						if (i < field_names.size()) {
+							detail += fmt::format("{}:{}->{}", field_names[i],
+							    nearest->static_state[i], lookup_key.static_state[i]);
+						} else {
+							detail += fmt::format("word{}:{}->{}", i, nearest->static_state[i],
+							    lookup_key.static_state[i]);
+						}
+					}
+					if (detail.empty()) detail = "same static state (other key fields differ)";
+					Log::WriteToConsoleAndLog(fmt::format(
+					    "ShaderStaticKeyDiff: hash=0x{:016x} changed_words={} detail={}\n",
+					    params.hash, nearest_diffs, detail));
+				}
+			}
+			// A specialization miss can be a necessary new module, or a
+			// previously overlooked descriptor normalization problem.
+			if (!was_new_program_key && !entry->second.permutations.empty() &&
+			    same_specialization == 0) {
+				const auto& old_state = entry->second.permutations.back().specialization;
+				const auto& new_state = entry->second.specialization;
+				std::string detail;
+				const auto changed = [&](const char* field, uint64_t before, uint64_t after) {
+					if (before == after) return;
+					if (!detail.empty()) detail += ", ";
+					detail += fmt::format("{}:{}->{}", field, before, after);
+				};
+				changed("buffers", old_state.buffers.size(), new_state.buffers.size());
+				changed("images", old_state.images.size(), new_state.images.size());
+				for (size_t i = 0; i < std::min(old_state.buffers.size(), new_state.buffers.size()); ++i) {
+					const auto& a = old_state.buffers[i];
+					const auto& b = new_state.buffers[i];
+					if (a == b) continue;
+					const auto prefix = fmt::format("buffer{}", i);
+					changed((prefix + ".stride").c_str(), a.packed_stride, b.packed_stride);
+					changed((prefix + ".format").c_str(), static_cast<uint32_t>(a.descriptor_format),
+					    static_cast<uint32_t>(b.descriptor_format));
+					changed((prefix + ".swizzle").c_str(), a.descriptor_swizzle, b.descriptor_swizzle);
+					changed((prefix + ".zero_stride_oob").c_str(), a.zero_stride_oob, b.zero_stride_oob);
+					changed((prefix + ".root").c_str(), a.indirect_root, b.indirect_root);
+					changed((prefix + ".map_offset").c_str(), a.indirect_mapping_offset, b.indirect_mapping_offset);
+					changed((prefix + ".search_iterations").c_str(),
+					    a.indirect_search_iterations, b.indirect_search_iterations);
+				}
+				for (size_t i = 0; i < std::min(old_state.images.size(), new_state.images.size()); ++i) {
+					const auto& a = old_state.images[i];
+					const auto& b = new_state.images[i];
+					if (a == b) continue;
+					const auto prefix = fmt::format("image{}", i);
+					changed((prefix + ".numeric").c_str(), static_cast<uint32_t>(a.numeric_class),
+					    static_cast<uint32_t>(b.numeric_class));
+					changed((prefix + ".dimension").c_str(), static_cast<uint32_t>(a.dimension),
+					    static_cast<uint32_t>(b.dimension));
+					changed((prefix + ".mips").c_str(), a.mip_count, b.mip_count);
+					changed((prefix + ".conversion").c_str(), static_cast<uint32_t>(a.conversion_format),
+					    static_cast<uint32_t>(b.conversion_format));
+					changed((prefix + ".swizzle").c_str(), a.shader_swizzle, b.shader_swizzle);
+					changed((prefix + ".root").c_str(), a.indirect_root, b.indirect_root);
+					changed((prefix + ".map_offset").c_str(), a.indirect_mapping_offset, b.indirect_mapping_offset);
+					changed((prefix + ".search_iterations").c_str(),
+					    a.indirect_search_iterations, b.indirect_search_iterations);
+					changed((prefix + ".cube").c_str(), a.cube, b.cube);
+					changed((prefix + ".fmask").c_str(), a.fmask, b.fmask);
+				}
+				Log::WriteToConsoleAndLog(fmt::format(
+				    "ShaderSpecializationDiff: hash=0x{:016x} detail={}\n",
+				    params.hash, detail.empty() ? "unknown" : detail));
+			}
 		}
 		entry->second.permutations.push_back(CompilePermutation(
 		    stage_name, options, std::move(translated), entry->second.specialization, push_data_cursor,
