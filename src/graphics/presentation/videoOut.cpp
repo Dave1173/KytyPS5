@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <chrono>
 #include "graphics/presentation/videoOut.h"
 
 #include "common/abi.h"
@@ -1198,6 +1200,30 @@ void FlipQueue::Wait(VideoOutConfig& cfg, int index) {
 	}
 }
 
+// Frames (5 s): the presented frames' rate and their interval (avg / 99th percentile / max), and the guest's CPU
+// time between flips is the same interval; measured where frames are presented.
+static void NoteFrameStats() {
+	using Clock = std::chrono::steady_clock;
+	static Clock::time_point     last {}, window {};
+	static std::vector<float>    intervals;
+	const auto now = Clock::now();
+	if (last != Clock::time_point {}) intervals.push_back(std::chrono::duration<float, std::milli>(now - last).count());
+	else window = now;
+	last = now;
+	if (now - window < std::chrono::seconds(5) || intervals.empty()) return;
+	const double seconds = std::chrono::duration<double>(now - window).count();
+	double       sum     = 0;
+	for (const float v: intervals) sum += v;
+	std::sort(intervals.begin(), intervals.end());
+	const float p99 = intervals[std::min(intervals.size() - 1, intervals.size() * 99 / 100)];
+	::printf("Frames (5 s): %.1f fps, frame %.2f ms avg, %.2f ms p99, %.2f ms max\n",
+	         static_cast<double>(intervals.size()) / seconds, sum / static_cast<double>(intervals.size()),
+	         static_cast<double>(p99), static_cast<double>(intervals.back()));
+	std::fflush(stdout);
+	intervals.clear();
+	window = now;
+}
+
 bool FlipQueue::Flip(uint32_t micros) {
 	KYTY_PROFILER_BLOCK("FlipQueue::Flip");
 
@@ -1249,6 +1275,7 @@ bool FlipQueue::Flip(uint32_t micros) {
 	}
 	if (due) {
 		m_presenter.Present(std::span(layers.data(), count));
+		NoteFrameStats();
 	}
 
 	m_mutex.Lock();

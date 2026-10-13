@@ -1087,7 +1087,10 @@ PipelineCache::PipelineCache(GraphicContext& graphics)
 	EXIT_NOT_IMPLEMENTED(!Common::Thread::IsMainThread());
 	InitializeDriverCache();
 	if (g_async_pipelines) {
-		const auto threads = std::clamp(std::thread::hardware_concurrency() / 4u, 1u, 4u);
+		// KYTY_PIPELINE_WORKERS=<n>: pipeline compile threads (1-16); default as before (a quarter of the CPUs, 1-4).
+		auto threads = std::clamp(std::thread::hardware_concurrency() / 4u, 1u, 4u);
+		if (const char* value = std::getenv("KYTY_PIPELINE_WORKERS"); value != nullptr && *value != '\0')
+			threads = std::clamp(static_cast<unsigned>(std::strtoul(value, nullptr, 10)), 1u, 16u);
 		m_compiler         = std::make_unique<PipelineCompiler>(threads);
 		PipelineCacheLog("Vulkan pipelines: compiled on {} worker threads (wait {} ms)", threads,
 		                 g_pipeline_wait.count());
