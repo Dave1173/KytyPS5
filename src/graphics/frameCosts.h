@@ -11,6 +11,10 @@ inline std::atomic<uint64_t> g_shader_us {0};
 inline std::atomic<uint64_t> g_shader_count {0};
 inline std::atomic<uint64_t> g_pipeline_wait_us {0};
 inline std::atomic<uint64_t> g_pipeline_waits {0};
+inline std::atomic<uint64_t> g_gpu_wait_us {0};
+inline std::atomic<uint64_t> g_gpu_waits {0};
+inline std::atomic<uint64_t> g_idle_us {0};
+inline std::atomic<uint64_t> g_idles {0};
 
 struct Timer {
 	std::atomic<uint64_t>&                sum;

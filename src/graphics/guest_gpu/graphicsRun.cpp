@@ -1,3 +1,4 @@
+#include "graphics/frameCosts.h"
 #include "graphics/guest_gpu/graphicsRun.h"
 
 #include "common/assert.h"
@@ -770,7 +771,10 @@ void GuestGpu::ThreadRun(void* data) {
 				KYTY_PROFILER_BLOCK("GuestGpu::WaitForWork");
 				gpu->m_processing = false;
 				gpu->m_idle.Signal();
-				gpu->m_work_available.Wait(&gpu->m_queue_mutex);
+				{
+					FrameCosts::Timer cost_timer {FrameCosts::g_idle_us, FrameCosts::g_idles};
+					gpu->m_work_available.Wait(&gpu->m_queue_mutex);
+				}
 			}
 			if (flush_pending) {
 				gpu->m_processing = true;
@@ -800,7 +804,10 @@ void GuestGpu::ThreadRun(void* data) {
 					gpu->m_processing = false;
 					{
 						KYTY_PROFILER_BLOCK("GuestGpu::WaitBlockedQueues");
-						gpu->m_work_available.WaitFor(&gpu->m_queue_mutex, 100);
+						{
+							FrameCosts::Timer cost_timer {FrameCosts::g_idle_us, FrameCosts::g_idles};
+							gpu->m_work_available.WaitFor(&gpu->m_queue_mutex, 100);
+						}
 					}
 					for (auto& queue: gpu->m_queues) {
 						if (!queue.empty()) {

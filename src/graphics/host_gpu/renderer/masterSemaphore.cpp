@@ -1,3 +1,4 @@
+#include "graphics/frameCosts.h"
 #include "graphics/host_gpu/renderer/masterSemaphore.h"
 
 #include <cinttypes>
@@ -113,7 +114,11 @@ void MasterSemaphore::Wait(uint64_t tick) {
 	wait_info.pSemaphores    = &m_semaphore;
 	wait_info.pValues        = &tick;
 
-	const auto result = m_graphics.device.waitSemaphores(&wait_info, UINT64_MAX);
+	vk::Result result;
+	{
+		FrameCosts::Timer cost_timer {FrameCosts::g_gpu_wait_us, FrameCosts::g_gpu_waits};
+		result = m_graphics.device.waitSemaphores(&wait_info, UINT64_MAX);
+	}
 	if (result != vk::Result::eSuccess) {
 		if (result == vk::Result::eErrorDeviceLost) {
 			DumpDeviceLossDiagnostics(m_graphics);
