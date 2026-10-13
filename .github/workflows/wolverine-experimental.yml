@@ -100,7 +100,7 @@ jobs:
             -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON ^
-            -DKYTY_BUILD_ORIGIN=Experimental ^
+            -DKYTY_BUILD_ORIGIN=Fork ^
             -DKYTY_BUILD_REPOSITORY=Dave1173/KytyPS5 ^
             -DKYTY_RELEASE_TAG=Wolverine-Senaxx-Experiment ^
             -DCMAKE_C_COMPILER=clang-cl ^
