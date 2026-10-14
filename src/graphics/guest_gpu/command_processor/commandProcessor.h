@@ -1,6 +1,7 @@
 #ifndef GRAPHICS_GUEST_GPU_COMMAND_PROCESSOR_COMMAND_PROCESSOR_H
 #define GRAPHICS_GUEST_GPU_COMMAND_PROCESSOR_COMMAND_PROCESSOR_H
 
+#include <source_location>
 #include "common/assert.h"
 #include "graphics/guest_gpu/hardwareContext.h"
 #include "graphics/host_gpu/renderer/render.h"
@@ -61,8 +62,8 @@ public:
 	void ApplyContextStateOperation(ContextStateOperation operation);
 
 	void            BufferInit();
-	void            BufferFlush();
-	void            BufferFlushAndWait();
+	void            BufferFlush(std::source_location where = std::source_location::current());
+	void            BufferFlushAndWait(std::source_location where = std::source_location::current());
 	void            BufferWait();
 	HW::Context&    GetCtx() { return m_ctx; }
 	HW::UserConfig& GetUcfg() { return m_ucfg; }

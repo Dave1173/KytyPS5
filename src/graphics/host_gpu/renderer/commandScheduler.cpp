@@ -1,3 +1,7 @@
+#include <source_location>
+#include <cstring>
+#include <string>
+#include <mutex>
 #include "graphics/host_gpu/renderer/commandScheduler.h"
 
 #include "common/assert.h"
@@ -418,24 +422,49 @@ void CommandScheduler::EndRendering() {
 	}
 }
 
-void CommandScheduler::Flush() {
-	SubmitInfo submit;
-	Flush(submit);
+// Submissions per 5 s by the call site that ended the command buffer (where the work is split).
+static void NoteSubmitSite(const char* kind, const std::source_location& where) {
+	static std::mutex                                   mutex;
+	static std::unordered_map<std::string, uint64_t>    counts;
+	static std::chrono::steady_clock::time_point        report = std::chrono::steady_clock::now();
+	std::lock_guard lock(mutex);
+	const char* file = where.file_name();
+	if (const char* slash = std::strrchr(file, '/')) file = slash + 1;
+	if (const char* slash = std::strrchr(file, '\\')) file = slash + 1;
+	counts[std::string(kind) + " " + file + ":" + std::to_string(where.line())]++;
+	const auto now = std::chrono::steady_clock::now();
+	if (now - report >= std::chrono::seconds(5)) {
+		std::vector<std::pair<std::string, uint64_t>> sorted(counts.begin(), counts.end());
+		std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+		::printf("Submit sites (5 s):\n");
+		for (size_t i = 0; i < sorted.size() && i < 12; i++) ::printf("  %6llu %s\n", static_cast<unsigned long long>(sorted[i].second), sorted[i].first.c_str());
+		std::fflush(stdout);
+		counts.clear();
+		report = now;
+	}
 }
 
-void CommandScheduler::Flush(SubmitInfo& submit) {
+void CommandScheduler::Flush(std::source_location where) {
+	SubmitInfo submit;
+	Flush(submit, where);
+}
+
+void CommandScheduler::Flush(SubmitInfo& submit, std::source_location where) {
+	NoteSubmitSite("flush", where);
 	Submit(submit);
 	BeginNext();
 }
 
-void CommandScheduler::FlushAndWait() {
+void CommandScheduler::FlushAndWait(std::source_location where) {
+	NoteSubmitSite("flush+wait", where);
 	KYTY_PROFILER_FUNCTION();
 	const auto tick = Submit();
 	m_master.Wait(tick);
 	BeginNext();
 }
 
-void CommandScheduler::Finish() {
+void CommandScheduler::Finish(std::source_location where) {
+	NoteSubmitSite("finish", where);
 	KYTY_PROFILER_FUNCTION();
 	CheckActive();
 	if (!m_command.IsInvalid()) {

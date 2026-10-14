@@ -1,6 +1,7 @@
 #ifndef EMULATOR_SRC_GRAPHICS_HOST_GPU_RENDERER_COMMANDSCHEDULER_H_
 #define EMULATOR_SRC_GRAPHICS_HOST_GPU_RENDERER_COMMANDSCHEDULER_H_
 
+#include <source_location>
 #include "common/common.h"
 #include "common/uniqueFunction.h"
 #include "graphics/host_gpu/renderer/masterSemaphore.h"
@@ -33,10 +34,10 @@ public:
 	void           Begin(HW::Context& registers, HW::UserConfig& user_config, HW::Shader& shaders);
 	void           BeginRendering(const RenderState& state);
 	void           EndRendering();
-	void           Flush();
-	void           Flush(SubmitInfo& submit);
-	void           FlushAndWait();
-	void           Finish();
+	void           Flush(std::source_location where = std::source_location::current());
+	void           Flush(SubmitInfo& submit, std::source_location where = std::source_location::current());
+	void           FlushAndWait(std::source_location where = std::source_location::current());
+	void           Finish(std::source_location where = std::source_location::current());
 	CommandBuffer& BeginCommand();
 	// KYTY_SHADER_GPU_TIME: a timestamp pair around one draw or dispatch, tagged with the shader
 	// hash. Called on the thread that records the command buffer (CommandRecorder forwards it).

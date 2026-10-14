@@ -488,13 +488,13 @@ void CommandProcessor::BufferInit() {
 	GetScheduler().Begin(m_ctx, m_ucfg, m_sh_ctx);
 }
 
-void CommandProcessor::BufferFlush() {
+void CommandProcessor::BufferFlush(std::source_location where) {
 	KYTY_PROFILER_FUNCTION();
-	GetScheduler().Flush();
+	GetScheduler().Flush(where);
 }
 
-void CommandProcessor::BufferFlushAndWait() {
-	GetScheduler().FlushAndWait();
+void CommandProcessor::BufferFlushAndWait(std::source_location where) {
+	GetScheduler().FlushAndWait(where);
 }
 
 void CommandProcessor::BufferWait() {
