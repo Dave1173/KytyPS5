@@ -1,0 +1,109 @@
+name: Wolverine NVIDIA experimental Windows build
+
+on:
+  push:
+    branches:
+      - wolverine/nvidia-texture-readback-ci-20261014
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/wolverine-windows-build.yml
+      - tools/wolverine/**
+
+permissions:
+  contents: read
+
+jobs:
+  wolverine-windows:
+    name: Compile Wolverine KytyPS5 (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 300
+    steps:
+      - name: Checkout this build configuration
+        uses: actions/checkout@v4
+
+      - name: Setup Visual Studio developer tools
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install glslang tools
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Split-Path (Get-Command vcpkg).Source
+          vcpkg install 'glslang[tools,opt]:x64-windows'
+          if ($LASTEXITCODE -ne 0) { throw "glslang install failed" }
+          "$vcpkgRoot\installed\x64-windows\tools\glslang" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Qt 6 for MSVC
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Verify compiler and tools
+        shell: pwsh
+        run: |
+          git --version
+          cmake --version
+          ninja --version
+          clang-cl --version
+          glslangValidator --version
+          if (-not $env:Qt6_DIR) { throw "Qt6_DIR was not set" }
+
+      - name: Clone exact working-build source
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none https://github.com/todojuegos67-bot/KytyPS5.git kyty-source
+          if ($LASTEXITCODE -ne 0) { throw "clone failed" }
+          git -C kyty-source checkout --detach ebb180a1d9ddb740598632d417da2f67a25dd318
+          if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
+          git -C kyty-source submodule update --init --recursive
+          if ($LASTEXITCODE -ne 0) { throw "submodule initialization failed" }
+
+      - name: Apply GPU and texture source fixes
+        shell: pwsh
+        run: |
+          python -m py_compile tools/wolverine/apply_patches.py
+          if ($LASTEXITCODE -ne 0) { throw "patch script syntax failed" }
+          python tools/wolverine/apply_patches.py kyty-source
+          if ($LASTEXITCODE -ne 0) { throw "source patch check failed" }
+
+      - name: Configure release build
+        shell: pwsh
+        run: |
+          cmake -S kyty-source -B kyty-source/_Build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl "-DCMAKE_PREFIX_PATH=$env:Qt6_DIR"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+
+      - name: Compile Windows launcher and emulator
+        shell: pwsh
+        run: |
+          cmake --build kyty-source/_Build/windows --target launcher --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw "Windows compile failed" }
+
+      - name: Stage standalone Windows package
+        shell: pwsh
+        run: |
+          cmake --install kyty-source/_Build/windows --prefix kyty-source/_Build/windows/install
+          if ($LASTEXITCODE -ne 0) { throw "Windows install failed" }
+          @"
+          Wolverine KytyPS5 - experimental Windows x64
+          Base source: todojuegos67-bot/KytyPS5 ebb180a1d9ddb740598632d417da2f67a25dd318
+          Changes: atomic CPU/GPU readback ownership + GPU write texture overlap invalidation
+          Tested: source anchors & compiler build only, not Wolverine gameplay.
+          DO NOT overwrite your current working emulator. Test this build separately.
+          Preserve your save data and shader cache. No game content included.
+          "@ | Set-Content kyty-source/_Build/windows/install/WOLVERINE_EXPERIMENTAL_README.txt
+          if (-not (Get-ChildItem kyty-source/_Build/windows/install -Recurse -File | Select-Object -First 1)) {
+            throw "No executable files were staged"
+          }
+
+      - name: Upload Windows build for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wolverine-KytyPS5-NVIDIA-experimental-Windows
+          path: kyty-source/_Build/windows/install/
+          if-no-files-found: error
+          retention-days: 14
