@@ -30,6 +30,8 @@ public:
 	void               MarkRegionAsCpuModified(uint64_t vaddr, uint64_t size);
 	void               MarkRegionAsGpuModified(uint64_t vaddr, uint64_t size);
 	void               UnmarkRegionAsGpuModified(uint64_t vaddr, uint64_t size);
+	// Transfer ownership without a GPU/CPU state race (page-granular).
+	void               TakeGpuPagesForCpu(uint64_t vaddr, uint64_t size);
 	void               UntrackMemory(uint64_t vaddr, uint64_t size);
 	// Calls func(address, bytes) for each part of the range, one per tracker region, that may
 	// hold CPU-dirty pages (lock-free summaries: false is exact, true is conservative).
