@@ -1964,7 +1964,9 @@ void TextureCache::InvalidateMemoryFromGPU(uint64_t address, uint64_t size) {
 	std::scoped_lock lock {m_lock};
 	for (const auto id: FindImagesInRegion(address, size, true)) {
 		auto& image = m_slot_images[id];
-		if (image.info.data.address != address) {
+		// A partial GPU write also invalidates the affected image alias.
+		if (image.info.data.Empty() || image.info.data.End() <= address ||
+		    image.info.data.address >= address + size) {
 			continue;
 		}
 		if (image.IsGpuModified()) {
