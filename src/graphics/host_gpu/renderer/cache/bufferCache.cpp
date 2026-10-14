@@ -791,9 +791,10 @@ void BufferCache::ReadMemoryOnGpu(uint64_t vaddr, uint64_t size, bool is_write) 
 	CompletePendingWriteReadbacks(page_begin, page_end);
 	if (m_memory_tracker.IsRegionGpuModified(page_begin, page_end - page_begin) &&
 	    !HasGpuDirtyBytes(page_begin, page_end - page_begin)) {
-		m_memory_tracker.UnmarkRegionAsGpuModified(page_begin, page_end - page_begin);
 		if (is_write) {
-			m_memory_tracker.MarkRegionAsCpuModified(vaddr, size);
+			m_memory_tracker.TakeGpuPagesForCpu(vaddr, size);
+		} else {
+			m_memory_tracker.UnmarkRegionAsGpuModified(page_begin, page_end - page_begin);
 		}
 		stats.SetOutcome(ReadbackStats::Unmarked);
 		return;
@@ -867,9 +868,10 @@ bool BufferCache::TryDirectReadback(Buffer& buffer, uint64_t vaddr, uint64_t siz
 		    });
 		m_gpu_modified_ranges.Subtract(page_begin, page_end - page_begin);
 	}
-	m_memory_tracker.UnmarkRegionAsGpuModified(page_begin, page_end - page_begin);
 	if (is_write) {
-		m_memory_tracker.MarkRegionAsCpuModified(vaddr, size);
+		m_memory_tracker.TakeGpuPagesForCpu(vaddr, size);
+	} else {
+		m_memory_tracker.UnmarkRegionAsGpuModified(page_begin, page_end - page_begin);
 	}
 	m_direct_readbacks++;
 	return true;
@@ -1050,9 +1052,10 @@ uint64_t BufferCache::BeginWriteReadback(uint64_t vaddr, uint64_t size, bool is_
 	// As in ReadMemoryOnGpu: a GPU-owned page without bytes to download only needs unprotecting.
 	if (m_memory_tracker.IsRegionGpuModified(page_begin, page_end - page_begin) &&
 	    !HasGpuDirtyBytes(page_begin, page_end - page_begin)) {
-		m_memory_tracker.UnmarkRegionAsGpuModified(page_begin, page_end - page_begin);
 		if (is_write) {
-			m_memory_tracker.MarkRegionAsCpuModified(vaddr, size);
+			m_memory_tracker.TakeGpuPagesForCpu(vaddr, size);
+		} else {
+			m_memory_tracker.UnmarkRegionAsGpuModified(page_begin, page_end - page_begin);
 		}
 		stats.SetOutcome(ReadbackStats::Unmarked);
 		return 0;
