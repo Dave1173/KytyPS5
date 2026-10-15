@@ -1,0 +1,118 @@
+name: Wolverine Shader Resource Test Build (Windows)
+
+on:
+  push:
+    branches:
+      - wolverine/shader-indirect-fetch-v2
+  pull_request:
+    branches:
+      - wolverine/working-ebb180a-baseline
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wolverine-shader-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows 64-bit NVIDIA experimental build
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - name: Checkout working-revision source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Visual Studio developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Locate vcpkg
+        id: vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Split-Path (Get-Command vcpkg).Source
+          $portHash = (Get-FileHash "$vcpkgRoot\ports\glslang\vcpkg.json" -Algorithm SHA256).Hash
+          "root=$vcpkgRoot" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "port_hash=$($portHash.ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Cache glslang tools
+        id: glslang_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.vcpkg.outputs.root }}\installed\x64-windows
+          key: wolverine-glslang-${{ runner.os }}-${{ runner.arch }}-${{ steps.vcpkg.outputs.port_hash }}-tools-opt
+
+      - name: Install glslang tools
+        shell: pwsh
+        run: |
+          $vcpkgRoot = "${{ steps.vcpkg.outputs.root }}"
+          if ("${{ steps.glslang_cache.outputs.cache-hit }}" -ne "true") {
+            vcpkg install glslang[tools,opt]:x64-windows
+            if ($LASTEXITCODE -ne 0) { throw "glslang installation failed" }
+          }
+          "$vcpkgRoot\installed\x64-windows\tools\glslang" | Out-File $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Qt 6.10.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Setup build cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Configure Clang release build
+        shell: cmd
+        run: |
+          cmake -S . -B _Build/windows ^
+            -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON ^
+            -DCMAKE_C_COMPILER=clang-cl ^
+            -DCMAKE_CXX_COMPILER=clang-cl ^
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
+
+      - name: Build KytyPS5 and source regression tests
+        shell: cmd
+        run: |
+          cmake --build _Build/windows --target launcher ^
+            resource_tracking_tests shader_recompiler_compute_tests ^
+            resource_materialization_tests virtual_memory_allocation_tests ^
+            --parallel 4
+
+      - name: Run source regression tests
+        shell: cmd
+        run: |
+          ctest --test-dir _Build/windows --output-on-failure ^
+            -R "^(resource_tracking|resource_materialization|virtual_memory_allocation)$"
+
+      - name: Install standalone Windows build
+        shell: pwsh
+        run: |
+          cmake --install _Build/windows --prefix _Build/windows/install
+          if ($LASTEXITCODE -ne 0) { throw "CMake installation failed" }
+          @"
+          WOLVERINE SHADER FETCH EXPERIMENT - WINDOWS x64
+          Base commit: ebb180a1d9ddb740598632d417da2f67a25dd318
+          Patches: indirect image fetch selection and heterogeneous typed texel fetches.
+          This is an experimental C++ emulator build, not a guaranteed playable game.
+          Do not overwrite your existing working emulator, game, save data, or shader cache.
+          Launch/test from a separate folder. No game files are distributed.
+          "@ | Out-File "_Build/windows/install/WOLVERINE_TEST_README.txt" -Encoding utf8
+
+      - name: Upload separate Windows test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wolverine-KytyPS5-Shader-Fetch-V2-Windows-x64
+          path: _Build/windows/install/**
+          if-no-files-found: error
+          retention-days: 14
