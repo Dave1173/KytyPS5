@@ -601,6 +601,20 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			return SpecializationFail("indirect image specialization has no typed candidate");
 		}
 		const auto& image_class = specialization.images[exemplar];
+		// Fetch-only indirect images may alternate float/uint descriptors. A fetch
+		// has no sampler state, so the SPIR-V emitter selects a typed fetch for
+		// each candidate and bitcasts the returned component bits before merging.
+		// Do not allow this for filtered sampling, storage or depth comparison.
+		const auto& root_info = program.info.images[root_index];
+		const bool fetch_only_mixed_numeric =
+		    root_info.resource_class == ImageResourceClass::Sampled && !root_info.depth_compare &&
+		    std::ranges::none_of(program.info.sampled_pairs,
+		                         [root_index](const auto& pair) { return pair.image == root_index; }) &&
+		    image_class.conversion_format == Prospero::BufferFormat::kInvalid;
+		const auto is_float_or_uint = [](Prospero::TextureNumericClass cls) {
+			return cls == Prospero::TextureNumericClass::Float ||
+			       cls == Prospero::TextureNumericClass::Uint;
+		};
 		const auto is_2d = [](Decoder::ImageDimension dimension) {
 			return dimension == Decoder::ImageDimension::Dim2D ||
 			       dimension == Decoder::ImageDimension::Dim2DArray;
@@ -620,7 +634,12 @@ static bool BuildResourceSpecialization(const ResourcePlan& program, ResourceSna
 			}
 			const bool same_coordinates = image.dimension == image_class.dimension &&
 			                              image.cube == image_class.cube;
-			if (image.numeric_class != image_class.numeric_class ||
+			const bool numeric_compatible =
+			    image.numeric_class == image_class.numeric_class ||
+			    (fetch_only_mixed_numeric && is_float_or_uint(image_class.numeric_class) &&
+			     is_float_or_uint(image.numeric_class) &&
+			     image.conversion_format == Prospero::BufferFormat::kInvalid);
+			if (!numeric_compatible ||
 			    (!same_coordinates && !(is_2d(image.dimension) && is_2d(image_class.dimension))) ||
 			    image.mip_count != image_class.mip_count ||
 			    image.conversion_format != image_class.conversion_format ||
@@ -1863,10 +1882,11 @@ void ApplyResourceSpecialization(Program& program, const ResourceSpecialization&
 				memory.sampler = sampler_plan.mapping[memory.sampler][type];
 				EXIT_IF(memory.sampler == UINT32_MAX);
 			}
-			// Enumerated candidates only sample; a bindless image is loaded per instruction and
-			// serves every image operation.
+			// Enumerated candidates support direct sampled accesses and typed texel
+			// fetches. Other operations require their own indirect SPIR-V path.
 			EXIT_IF(image.indirect_root == memory.resource && !image.bindless &&
-			        inst.GetOpcode() != ValueOpcode::ImageSampleRaw);
+			        inst.GetOpcode() != ValueOpcode::ImageSampleRaw &&
+			        inst.GetOpcode() != ValueOpcode::ImageRead);
 		}
 	}
 	// Tracking gives an image index only to the accesses that survived its dead-code pass; an
