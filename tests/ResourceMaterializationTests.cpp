@@ -300,8 +300,11 @@ void TestFiniteImageRefreshReusesScalarReads() {
     source.dword_count = 8;
     source.dwords.fill(Value(0u));
     source.dwords[0] = Value(&flat);
-    source.dwords[1] = Value(static_cast<uint32_t>(
-        Libs::Graphics::Prospero::BufferFormat::k32_32_32_32Float) << 20u);
+    // Candidate 2 uses a UINT descriptor to cover heterogeneous fetch-only tables.
+    const auto descriptor_format = index == 2u
+        ? Libs::Graphics::Prospero::BufferFormat::k32_32_32_32UInt
+        : Libs::Graphics::Prospero::BufferFormat::k32_32_32_32Float;
+    source.dwords[1] = Value(static_cast<uint32_t>(descriptor_format) << 20u);
     source.dwords[3] = Value(Libs::Graphics::DstSel(4, 5, 6, 7) |
         (static_cast<uint32_t>(Libs::Graphics::Prospero::ImageType::kColor2D) << 28u));
     program.descriptor_sources.push_back(source);
@@ -344,9 +347,9 @@ void TestFiniteImageRefreshReusesScalarReads() {
     return std::array{snapshot.images.capacity(), snapshot.flattened_srt.capacity(),
                       snapshot.specialization_reads.capacity(), specialization.images.capacity()};
   };
-  const auto check_mapping = [&](std::array<uint32_t, 4> ordinals) {
+  const auto check_mapping = [&](std::array<uint32_t, 4> ordinals, size_t image_count) {
     const auto offset = specialization.images[0].indirect_mapping_offset;
-    Check(snapshot.images.size() == 2 && snapshot.flattened_srt[offset] == 4,
+    Check(snapshot.images.size() == image_count && snapshot.flattened_srt[offset] == 4,
           "finite image candidates were not deduplicated");
     for (uint32_t key = 0; key < ordinals.size(); ++key) {
       Check(snapshot.flattened_srt[offset + 1u + key * 2u] == key &&
@@ -359,7 +362,7 @@ void TestFiniteImageRefreshReusesScalarReads() {
   Check(reads.ordinary == 0 && reads.counts == std::array<uint32_t, 3>{1, 1, 1} &&
             snapshot.specialization_reads.size() == 3,
         "finite image candidates repeated scalar reads or bypassed clean provenance");
-  check_mapping({0, 1, 1, 1});
+  check_mapping({0, 1, 2, 1}, 3);
   const auto warm_capacities = capacities();
   reads.words = {0x300u, 0x300u, 0x400u};
   Check(MaterializeResources(plan, runtime, snapshot, specialization),
@@ -368,7 +371,13 @@ void TestFiniteImageRefreshReusesScalarReads() {
             snapshot.specialization_reads.size() == 3 &&
             snapshot.images[0].dwords[0] == 0x300u && snapshot.images[1].dwords[0] == 0x400u,
         "finite image refresh retained old scalar values or repeated reads");
-  check_mapping({0, 0, 1, 0});
+  check_mapping({0, 0, 1, 0}, 2);
+  Check(specialization.images.size() == 2 &&
+            specialization.images[0].numeric_class ==
+                Libs::Graphics::Prospero::TextureNumericClass::Float &&
+            specialization.images[1].numeric_class ==
+                Libs::Graphics::Prospero::TextureNumericClass::Uint,
+        "fetch-only indirect image table rejected mixed float and uint candidates");
   Check(capacities() == warm_capacities,
         "finite image refresh grew reusable resource storage after warmup");
 }
