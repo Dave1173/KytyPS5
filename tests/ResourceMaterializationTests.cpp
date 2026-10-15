@@ -300,8 +300,11 @@ void TestFiniteImageRefreshReusesScalarReads() {
     source.dword_count = 8;
     source.dwords.fill(Value(0u));
     source.dwords[0] = Value(&flat);
-    source.dwords[1] = Value(static_cast<uint32_t>(
-        Libs::Graphics::Prospero::BufferFormat::k32_32_32_32Float) << 20u);
+    // Candidate 2 uses a UINT descriptor to cover heterogeneous fetch-only tables.
+    const auto descriptor_format = index == 2u
+        ? Libs::Graphics::Prospero::BufferFormat::k32_32_32_32UInt
+        : Libs::Graphics::Prospero::BufferFormat::k32_32_32_32Float;
+    source.dwords[1] = Value(static_cast<uint32_t>(descriptor_format) << 20u);
     source.dwords[3] = Value(Libs::Graphics::DstSel(4, 5, 6, 7) |
         (static_cast<uint32_t>(Libs::Graphics::Prospero::ImageType::kColor2D) << 28u));
     program.descriptor_sources.push_back(source);
@@ -369,6 +372,12 @@ void TestFiniteImageRefreshReusesScalarReads() {
             snapshot.images[0].dwords[0] == 0x300u && snapshot.images[1].dwords[0] == 0x400u,
         "finite image refresh retained old scalar values or repeated reads");
   check_mapping({0, 0, 1, 0});
+  Check(specialization.images.size() == 2 &&
+            specialization.images[0].numeric_class ==
+                Libs::Graphics::Prospero::TextureNumericClass::Float &&
+            specialization.images[1].numeric_class ==
+                Libs::Graphics::Prospero::TextureNumericClass::Uint,
+        "fetch-only indirect image table rejected mixed float and uint candidates");
   Check(capacities() == warm_capacities,
         "finite image refresh grew reusable resource storage after warmup");
 }
