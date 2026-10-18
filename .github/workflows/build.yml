@@ -2,6 +2,9 @@ name: Build and Release KytyPS5
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/multigame-nvidia-rtx
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -133,6 +136,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.ref != 'refs/heads/feature/multigame-nvidia-rtx'
     name: Build KytyPS5 (macOS)
     needs: metadata
     runs-on: macos-15
@@ -289,6 +293,7 @@ jobs:
           if-no-files-found: error
 
   linux:
+    if: github.ref != 'refs/heads/feature/multigame-nvidia-rtx'
     name: Build KytyPS5 (Linux)
     needs: metadata
     runs-on: ubuntu-24.04
